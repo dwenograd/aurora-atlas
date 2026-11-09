@@ -219,6 +219,17 @@
     return out;
   };
 
+  // 8-day hourly cloud cover at a handful of places within driving range (one request, cached 3 hours)
+  D.loadNightClouds = async (pts, key) => {
+    const c = U.cacheGet(key, 3 * U.HOUR);
+    if (c) return c;
+    const url = `${D.URL.meteo}?latitude=${pts.map((p) => p.lat.toFixed(2)).join(',')}&longitude=${pts.map((p) => p.lon.toFixed(2)).join(',')}&hourly=cloud_cover&forecast_days=8&timeformat=unixtime&timezone=GMT`;
+    const j = await U.retry(() => U.fetchJSON(url, { timeout: 30000 }));
+    const out = (Array.isArray(j) ? j : [j]).map((x) => ({ t0: x.hourly.time[0] * 1000, cc: x.hourly.cloud_cover }));
+    U.cachePut(key, out);
+    return out;
+  };
+
   // Regional cloud grid: 21 x 21 points about 24 km apart (roughly 480 km square) around a center
   const toB64 = (u8) => { let s = ''; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
   const fromB64 = (b) => { const s = atob(b); const u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return u; };

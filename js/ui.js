@@ -55,7 +55,7 @@
     U.$$('.tab-body').forEach((s) => { s.hidden = s.id !== `tab-${name}`; });
     UI.moveInk();
     U.store.set('aa.tab', name);
-    if (name === 'tonight') UI.renderTonight();
+    if (name === 'tonight') { UI.renderTonight(); UI.renderNights(); }
     if (name === 'spots') UI.renderSpots();
     if (name === 'space') UI.renderSpace();
     if (name === 'log') UI.renderLog();
@@ -424,6 +424,86 @@
     c.addEventListener('pointerleave', () => { $('#hourlyTip').hidden = true; });
   };
 
+  // ---------- Coming nights ----------
+  const lvlColor = (n) => (!n.lvl ? 'var(--ink-3)' : n.lvl.s >= 0.75 ? 'var(--good)' : n.lvl.s >= 0.45 ? '#c8e86a' : n.lvl.s >= 0.18 ? 'var(--warn)' : 'var(--ink-3)');
+  const dayName = (t) => (t <= Date.now() ? 'Now' : U.isSameDay(t, Date.now()) ? 'Tonight' : U.isSameDay(t, Date.now() + U.DAY) ? 'Tomorrow' : U.fmtDay(t));
+  const placeLabel = (b) => (b.p.name === 'home' ? 'at home' : `near ${b.p.name}`);
+  UI.renderNights = () => {
+    const box = $('#nights');
+    if (!box) return;
+    const s = st(), N = app().nights(), plan = s.plan;
+    if (!s.home) { box.innerHTML = ''; return; }
+    const head = '<div class="sec-head"><h3>Coming nights</h3><span class="sec-note">Tap a night to map it</span></div>';
+    if (!N.list.length) { box.innerHTML = head + '<div class="skel" style="height:150px"></div>'; return; }
+    const list = N.list;
+    const need = list[0].need;
+    const near = list.filter((n) => n.clouds);
+    const far = list.filter((n) => !n.clouds);
+    const nextA = list.find((n) => n.lvl && n.lvl.s >= 0.45 && (!n.clouds || (n.bestA && n.bestA.clear >= 0.4)));
+    const bestS = near.reduce((b, n) => (n.bestS && (!b || n.bestS.s > b.bestS.s) ? n : b), null);
+    const lines = [];
+    if (nextA) lines.push(`<b>Next aurora chance:</b> ${dayName(nextA.from)} ${U.fmtDate(nextA.from)}, Kp ${nextA.kp.toFixed(1)} (${nextA.lvl.label.toLowerCase()})${nextA.bestA ? `, clearest ${esc(placeLabel(nextA.bestA))}` : ', too far out for clouds'}.`);
+    else lines.push(`<b>No aurora-strength nights</b> in NOAA's outlook yet. From home you need about Kp ${need.toFixed(1)}; the outlook tops out at Kp ${Math.max(...list.map((n) => n.kp || 0))}.`);
+    if (bestS && bestS.bestS.s > 0.25) lines.push(`<b>Best stargazing:</b> ${dayName(bestS.from)} ${U.fmtDate(bestS.from)}, ${Math.round(bestS.bestS.clear * 100)}% clear ${esc(placeLabel(bestS.bestS))}, moon ${Math.round(bestS.moon * 100)}%.`);
+    let planHtml = '';
+    if (plan) {
+      const z = (a) => (a.zone == null ? '' : `<span class="tag"><i class="sw" style="background:${Sky.lpColor(a.zone)}"></i>Bortle ${Sky.LP[a.zone].bortle}</span>`);
+      const kpLine = plan.kp != null
+        ? `Kp up to ${plan.kp.toFixed(1)} (${esc(plan.kpSrc)}): <b style="color:${lvlColor(plan)}">${esc(plan.lvl.label.toLowerCase())}</b> from home, where you need ${plan.need.toFixed(1)}.`
+        : 'No Kp forecast for this night yet.';
+      const moonLine = `Moon ${Math.round(plan.moon * 100)}%${plan.moonUp > 0.1 ? `, up ${Math.round(plan.moonUp * 100)}% of the night` : ', down most of the night'}.`;
+      const areas = plan.areas.map((a, i) => `<li data-area="${i}"><i class="plan-pin">${'ABC'[i]}</i><span class="pa-name">${esc(a.name || 'Finding the place name…')}<small>${U.fmtDist(a.d)} ${U.compass(U.bearing(s.home, a))} of home</small></span><span class="pa-tags">${z(a)}<a class="btn sm ghost" href="${UI.directionsUrl(a.lat.toFixed(4), a.lon.toFixed(4))}" target="_blank" rel="noopener">${icon('route')}Go</a></span></li>`).join('');
+      planHtml = `<div class="plan-card">
+        <div class="plan-top"><div><span class="eyebrow">Planning</span><h4>${esc(U.fmtDateLong(plan.from))}</h4></div><button class="btn sm ghost" type="button" id="planBack">Back to now</button></div>
+        <p>${kpLine} ${moonLine}</p>
+        <p class="plan-note">${plan.assume ? 'Too far out for a cloud forecast, so the gold map assumes clear skies. Check back a few days before.' : 'Includes the cloud forecast for that night.'}</p>
+        <ol class="plan-areas">${areas}</ol>
+        <p class="plan-note">A, B and C are the darkest ground within your radius${plan.lvl && plan.lvl.s >= 0.45 ? ', leaning north for the aurora' : ''}. Tap one, then check road access on the satellite view, or run Find spots for named places.</p>
+      </div>`;
+    }
+    const row = (n, i) => {
+      const b = n.lvl && n.lvl.s >= 0.45 ? n.bestA : n.bestS;
+      const cl = b ? Math.round(b.clear * 100) : null;
+      const sel = plan && Math.abs(plan.from - n.from) < U.HOUR;
+      return `<button class="night ${sel ? 'sel' : ''}" type="button" data-n="${i}">
+        <span class="n-day"><b>${dayName(n.from)}</b><small>${U.fmtDate(n.from)}</small></span>
+        <span class="n-aur"><i style="background:${lvlColor(n)}"></i>${n.kp != null ? `Kp ${n.kp.toFixed(1)}` : 'Kp –'}<small>${n.lvl ? esc(n.lvl.short) : ''}</small></span>
+        <span class="n-cloud">${cl == null ? '<small>Clouds not forecast yet</small>' : `<span class="n-bar"><i style="width:${cl}%"></i></span><small>${cl}% clear ${esc(placeLabel(b))}</small>`}</span>
+        <span class="n-moon">${Sky.moonSVG(n.moonPhase)}<small>${Math.round(n.moon * 100)}%</small></span></button>`;
+    };
+    const farHtml = far.map((n) => {
+      const i = list.indexOf(n), sel = plan && Math.abs(plan.from - n.from) < U.HOUR;
+      return `<button class="far ${sel ? 'sel' : ''}" type="button" data-n="${i}" title="${esc(U.fmtDateLong(n.from))}: Kp ${n.kp ?? '–'}, moon ${Math.round(n.moon * 100)}%"><small>${U.fmtDay(n.from).slice(0, 2)} ${new Date(n.from).getDate()}</small><b style="color:${lvlColor(n)}">${n.kp ?? '–'}</b>${Sky.moonSVG(n.moonPhase)}</button>`;
+    }).join('');
+    box.innerHTML = head
+      + `<div class="nights-lede">${lines.map((l) => `<p>${l}</p>`).join('')}</div>`
+      + planHtml
+      + `<div class="night-list">${near.map((n) => row(n, list.indexOf(n))).join('')}</div>`
+      + (far.length ? `<div class="sec-head" style="margin-top:14px"><h3>Further out</h3><span class="sec-note">NOAA 27-day outlook, no clouds yet</span></div><div class="far-grid">${farHtml}</div>` : '')
+      + (N.cloudsOk ? '' : '<p class="plan-note">The cloud forecast did not load, so nights show Kp and moon only.</p>');
+  };
+  UI.bindNights = () => {
+    $('#nights').addEventListener('click', (e) => {
+      if (e.target.closest('a')) return;
+      if (e.target.closest('#planBack')) { app().clearPlan(); return; }
+      const ar = e.target.closest('[data-area]');
+      if (ar) {
+        const a = st().plan && st().plan.areas[+ar.dataset.area];
+        if (a) { app().flyTo(a.lat, a.lon, 10); app().inspect(a.lat, a.lon, { kind: 'pin', title: a.name || 'Dark ground', name: a.name }); }
+        return;
+      }
+      const b = e.target.closest('[data-n]');
+      if (b) { const n = app().nights().list[+b.dataset.n]; if (n) app().planNight(n); }
+    });
+    $('#outlook').addEventListener('click', (e) => {
+      const c = e.target.closest('[data-day]');
+      if (!c) return;
+      const t = +c.dataset.day;
+      const n = app().nights().list.find((x) => U.isSameDay(x.from, t));
+      if (n) app().planNight(n); else UI.toast('That night is not in the forecast list yet.');
+    });
+  };
+
   // ---------- Space weather ----------
   UI.renderSpace = () => {
     if (UI.activeTab !== 'space') return;
@@ -532,10 +612,10 @@
       const dark = mi.fraction < 0.45 || !moonUpLate;
       const isGood = r.kp >= need - 1.5 && dark;
       if (isGood) good++;
-      return `<div class="ol-day ${isGood ? 'good' : ''}" title="${U.fmtDateLong(local)}: Kp up to ${r.kp}, moon ${Math.round(mi.fraction * 100)}% lit">
+      return `<div class="ol-day ${isGood ? 'good' : ''}" data-day="${local.getTime()}" role="button" tabindex="0" title="Tap to map this night. ${U.fmtDateLong(local)}: Kp up to ${r.kp}, moon ${Math.round(mi.fraction * 100)}% lit">
         <div class="d">${local.toLocaleDateString([], { weekday: 'narrow' })} ${local.getDate()}</div>
         <div class="n">${r.kp}</div><div class="bar" style="background:${Sky.kpColor(r.kp)};opacity:${0.35 + r.kp / 12}"></div>${Sky.moonSVG(mi.phase)}</div>`;
-    }).join('') + `<div class="ol-key" style="grid-column:1/-1">Numbers are NOAA's largest expected Kp. ${good ? `Outlined days pair a decent Kp with a dark moon: ${good} in the next four weeks.` : 'No standout dark, active nights in the outlook yet.'}</div>`;
+    }).join('') + `<div class="ol-key" style="grid-column:1/-1">Numbers are NOAA's largest expected Kp. Tap a day to see where to go if it's clear. ${good ? `Outlined days pair a decent Kp with a dark moon: ${good} in the next four weeks.` : 'No standout dark, active nights in the outlook yet.'}</div>`;
   }
   function renderAlerts() {
     const box = $('#alertList');

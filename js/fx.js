@@ -24,8 +24,23 @@
     uniform vec2 uRes; uniform vec4 uView; uniform float uPpd; uniform vec2 uAnchor; uniform float uDpr; uniform float uTime;
     uniform sampler2D uOv; uniform float uAurora;
     uniform sampler2D uCloud; uniform vec4 uCBox; uniform vec2 uCN; uniform float uCMix; uniform float uClouds;
-    uniform sampler2D uSite; uniform vec2 uSN; uniform float uBest; uniform float uBMode; uniform float uKp; uniform vec4 uDark; uniform vec2 uPole;
+    uniform sampler2D uSite; uniform vec2 uSN; uniform float uBest; uniform float uBMode; uniform float uKp; uniform vec4 uDark; uniform vec2 uPole; uniform float uAssume;
     ${NOISE}
+    // Smooth cubic B-spline sampling of the coarse cloud grid (4 bilinear taps), so it has no grid kinks
+    vec4 cloudAt(vec2 cuv) {
+      vec2 p = cuv * (uCN - 1.0);
+      vec2 i = floor(p); vec2 f = p - i;
+      vec2 f2 = f * f; vec2 f3 = f2 * f;
+      vec2 w0 = (1.0 - 3.0 * f + 3.0 * f2 - f3) / 6.0;
+      vec2 w1 = (4.0 - 6.0 * f2 + 3.0 * f3) / 6.0;
+      vec2 w2 = (1.0 + 3.0 * f + 3.0 * f2 - 3.0 * f3) / 6.0;
+      vec2 w3 = f3 / 6.0;
+      vec2 g0 = w0 + w1; vec2 g1 = w2 + w3;
+      vec2 h0 = (i - 1.0 + w1 / g0 + 0.5) / uCN;
+      vec2 h1 = (i + 1.0 + w3 / g1 + 0.5) / uCN;
+      return g0.y * (g0.x * texture2D(uCloud, vec2(h0.x, h0.y)) + g1.x * texture2D(uCloud, vec2(h1.x, h0.y)))
+           + g1.y * (g0.x * texture2D(uCloud, vec2(h0.x, h1.y)) + g1.x * texture2D(uCloud, vec2(h1.x, h1.y)));
+    }
     void main() {
       vec2 uv = gl_FragCoord.xy / uRes;
       float lon = mix(uView.x, uView.y, uv.x);
@@ -38,8 +53,7 @@
         float cu = (lon - uCBox.x) / (uCBox.z - uCBox.x);
         float cv = (lat - uCBox.y) / (uCBox.w - uCBox.y);
         if (cu > 0.0 && cu < 1.0 && cv > 0.0 && cv < 1.0) {
-          vec2 tc = vec2((cu * (uCN.x - 1.0) + 0.5) / uCN.x, (cv * (uCN.y - 1.0) + 0.5) / uCN.y);
-          vec4 c = texture2D(uCloud, tc);
+          vec4 c = cloudAt(vec2(cu, cv));
           float cc = mix(c.r, c.g, uCMix);
           float low = mix(c.b, c.a, uCMix);
           float edge = smoothstep(0.0, 0.05, cu) * smoothstep(0.0, 0.05, 1.0 - cu) * smoothstep(0.0, 0.05, cv) * smoothstep(0.0, 0.05, 1.0 - cv);
@@ -47,7 +61,7 @@
           if (uBest > 0.002) {
             vec2 sc = vec2((cu * (uSN.x - 1.0) + 0.5) / uSN.x, (cv * (uSN.y - 1.0) + 0.5) / uSN.y);
             float site = texture2D(uSite, sc).r;
-            float clar = 1.0 - cc;
+            float clar = mix(1.0 - cc, 1.0, uAssume);
             float rl = radians(lat);
             float sml = sin(rl) * sin(uPole.x) + cos(rl) * cos(uPole.x) * cos(radians(lon) - uPole.y);
             float ml = degrees(asin(clamp(sml, -1.0, 1.0)));
@@ -59,7 +73,6 @@
             vec3 bc = mix(vec3(0.10, 0.50, 0.58), vec3(0.36, 0.92, 0.6), smoothstep(0.3, 0.56, s));
             bc = mix(bc, vec3(1.0, 0.87, 0.5), smoothstep(0.56, 0.8, s));
             float ba = smoothstep(0.2, 0.6, s) * mix(0.55, 0.82, smoothstep(0.56, 0.85, s)) * k;
-            ba *= 1.0 - 0.14 * smoothstep(0.6, 0.85, s) * (0.5 + 0.5 * sin(uTime * 0.8 + g.x / 160.0 + g.y / 210.0));
             col = vec3(0.012, 0.02, 0.04) * veil; alpha = veil;
             col = bc * ba + col * (1.0 - ba); alpha = ba + alpha * (1.0 - ba);
             if (s > 0.6) {
@@ -167,7 +180,7 @@
       hasOv: false, grid: null, h0: -1, cmix: 0, anchor: null, anchorZoom: null, lost: false, ovData: null,
       site: null, bp: { kp: 0, mode: 1, dark: [0, 0, 1, 1] },
     };
-    const UNIFORMS = ['uRes', 'uView', 'uPpd', 'uAnchor', 'uDpr', 'uTime', 'uOv', 'uAurora', 'uCloud', 'uCBox', 'uCN', 'uCMix', 'uClouds', 'uSite', 'uSN', 'uBest', 'uBMode', 'uKp', 'uDark', 'uPole'];
+    const UNIFORMS = ['uRes', 'uView', 'uPpd', 'uAnchor', 'uDpr', 'uTime', 'uOv', 'uAurora', 'uCloud', 'uCBox', 'uCN', 'uCMix', 'uClouds', 'uSite', 'uSN', 'uBest', 'uBMode', 'uKp', 'uDark', 'uPole', 'uAssume'];
     const mkTex = () => {
       const t = gl.createTexture();
       gl.bindTexture(gl.TEXTURE_2D, t);
@@ -289,6 +302,7 @@
       gl.uniform1f(u.uKp, bp.kp);
       gl.uniform4f(u.uDark, bp.dark[0], bp.dark[1], bp.dark[2], bp.dark[3]);
       gl.uniform2f(u.uPole, U.rad(AA.Sky.POLE.lat), U.rad(AA.Sky.POLE.lon));
+      gl.uniform1f(u.uAssume, bp.assume || 0);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
     return {

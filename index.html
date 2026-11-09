@@ -18,7 +18,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400..700;1,6..96,400..700&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400..600&display=swap">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-  <link rel="stylesheet" href="styles.css?v=11">
+  <link rel="stylesheet" href="styles.css?v=14">
 </head>
 <body>
   <!-- Icon sprite -->
@@ -131,7 +131,7 @@
     <aside class="panel glass" id="panel" aria-label="Sky planner">
       <button class="sheet-grip" id="sheetGrip" type="button" aria-label="Expand panel"><i></i></button>
       <nav class="tabs" role="tablist" aria-label="Sections">
-        <button class="tab-btn" role="tab" id="t-tonight" aria-controls="tab-tonight" aria-selected="true" data-tab="tonight"><svg class="ic"><use href="#i-moon"/></svg>Tonight</button>
+        <button class="tab-btn" role="tab" id="t-tonight" aria-controls="tab-tonight" aria-selected="true" data-tab="tonight"><svg class="ic"><use href="#i-moon"/></svg>Forecast</button>
         <button class="tab-btn" role="tab" id="t-spots" aria-controls="tab-spots" aria-selected="false" data-tab="spots"><svg class="ic"><use href="#i-pin"/></svg>Spots</button>
         <button class="tab-btn" role="tab" id="t-space" aria-controls="tab-space" aria-selected="false" data-tab="space"><svg class="ic"><use href="#i-sun"/></svg>Space</button>
         <button class="tab-btn" role="tab" id="t-log" aria-controls="tab-log" aria-selected="false" data-tab="log"><svg class="ic"><use href="#i-book"/></svg>Journal</button>
@@ -152,6 +152,8 @@
           </div>
         </div>
         <button class="back-home" id="backHome" type="button" hidden><svg class="ic"><use href="#i-home"/></svg>Back to home</button>
+        <div class="sec nights-sec" id="nights"></div>
+        <div class="sec-head tonight-head"><h3>Tonight in detail</h3></div>
         <div class="verdict" id="verdict"></div>
         <div class="facts" id="facts"></div>
         <div class="sec">
@@ -260,11 +262,11 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/suncalc/1.9.0/suncalc.min.js"></script>
-  <script src="js/util.js?v=11"></script>
-  <script src="js/sky.js?v=11"></script>
-  <script src="js/data.js?v=11"></script>
-  <script src="js/fx.js?v=11"></script>
-  <script src="js/ui.js?v=11"></script>
-  <script src="js/app.js?v=11"></script>
+  <script src="js/util.js?v=14"></script>
+  <script src="js/sky.js?v=14"></script>
+  <script src="js/data.js?v=14"></script>
+  <script src="js/fx.js?v=14"></script>
+  <script src="js/ui.js?v=14"></script>
+  <script src="js/app.js?v=14"></script>
 </body>
 </html>

@@ -423,6 +423,140 @@
     }
   };
 
+  // ---------- Coming nights: when and where it's worth going out ----------
+  const nights = { list: [], loading: false, cloudsOk: false };
+  app.nights = () => nights;
+  function nightPoints() {
+    const h = state.home, R = state.settings.radiusKm;
+    const pts = [{ lat: h.lat, lon: h.lon, name: 'home' }];
+    for (const s of state.spots.slice(0, 6)) pts.push({ lat: s.lat, lon: s.lon, name: s.name });
+    for (const g of state.suggestions.slice(0, 4)) pts.push({ lat: g.lat, lon: g.lon, name: g.name || (D.KINDS[g.kind] || D.KINDS.place).label });
+    for (const [f, step] of [[0.5, 90], [1, 45]]) {
+      for (let b = 0; b < 360; b += step) { const p = U.dest(h.lat, h.lon, b, R * f); pts.push({ ...p, name: `${U.fmtDist(R * f)} ${U.compass(b)} of home` }); }
+    }
+    return pts.slice(0, 24);
+  }
+  function computeNights(pts, cl) {
+    const h = state.home, need = Sky.kpNeeded(Sky.magLat(h.lat, h.lon));
+    const out = [];
+    const base = new Date(); base.setHours(14, 0, 0, 0);
+    for (let k = -1; k < 28; k++) {
+      const nw = Sky.nightWindow(h.lat, h.lon, base.getTime() + k * U.DAY);
+      const from = nw.dusk || nw.nautDusk || nw.sunset, to = nw.dawn || nw.nautDawn || nw.sunrise;
+      if (to < Date.now() + U.HOUR || out.some((n) => Math.abs(n.from - from) < U.HOUR)) continue;
+      const hours = [];
+      for (let x = U.floorHour(Math.max(from, Date.now())); x < to; x += U.HOUR) hours.push(x);
+      if (!hours.length) continue;
+      // Kp: NOAA's 3-day forecast where it reaches, then the 27-day outlook
+      let kp = null, kpSrc = null;
+      const fc = D.kpFc.filter((r) => r.t + 3 * U.HOUR > from && r.t < to && r.t + 3 * U.HOUR > Date.now());
+      if (fc.length) { kp = Math.max(...fc.map((r) => r.kp)); kpSrc = 'NOAA 3-day forecast'; }
+      else {
+        const od = D.outlook.filter((r) => Math.abs(r.t - (from + to) / 2) < 0.75 * U.DAY);
+        if (od.length) { kp = Math.max(...od.map((r) => r.kp)); kpSrc = 'NOAA 27-day outlook'; }
+      }
+      const lvl = kp == null ? null : Sky.kpLevel(kp, need);
+      const mi = Sky.moonIllum((from + to) / 2);
+      let up = 0;
+      for (const x of hours) if (Sky.moonPos(x + U.HOUR / 2, h.lat, h.lon).alt > 5) up++;
+      const moonLight = mi.fraction * (up / hours.length);
+      let bestA = null, bestS = null;
+      if (cl) {
+        pts.forEach((p, i) => {
+          const w = cl[i];
+          if (!w) return;
+          const v = hours.map((x) => { const j = Math.round((x - w.t0) / U.HOUR); return j >= 0 && j < w.cc.length ? w.cc[j] : null; }).filter((c) => c != null);
+          if (v.length < hours.length * 0.6) return;
+          const clear = v.reduce((s, c) => s + (1 - c / 100), 0) / v.length;
+          const site = D.siteAt(p.lat, p.lon) ?? 0.6;
+          const a = Sky.reachFactor(kp, Sky.magLat(p.lat, p.lon)) * clear * (1 - 0.35 * moonLight) * (1 - 0.45 * (1 - site));
+          const s = clear * (1 - 0.85 * moonLight) * site;
+          const c = { p, clear, a, s };
+          if (!bestA || a > bestA.a) bestA = c;
+          if (!bestS || s > bestS.s) bestS = c;
+        });
+      }
+      out.push({ from, to, kp, kpSrc, lvl, need, moon: mi.fraction, moonPhase: mi.phase, moonUp: up / hours.length, bestA, bestS, clouds: !!bestS });
+    }
+    return out;
+  }
+  async function refreshNights() {
+    if (!state.home) return;
+    const pts = nightPoints();
+    const key = `nights:${state.home.lat.toFixed(2)},${state.home.lon.toFixed(2)}:${state.settings.radiusKm}:${pts.map((p) => p.lat.toFixed(1) + p.lon.toFixed(1)).join('').length}:${state.spots.length}`;
+    nights.loading = true;
+    let cl = null;
+    try { cl = await D.loadNightClouds(pts, key); } catch (e) { console.warn('Night cloud forecast failed', e); }
+    nights.loading = false;
+    nights.cloudsOk = !!cl;
+    nights.cl = cl;
+    nights.list = computeNights(pts, cl);
+    UI.renderNights();
+  }
+  app.refreshNights = () => refreshNights();
+  app.recomputeNights = () => { if (state.home && nights.list.length) { nights.list = computeNights(nightPoints(), nights.cl); UI.renderNights(); } };
+  // Plan a night: Best sky for that night's Kp and moon; beyond the cloud forecast it assumes clear skies
+  const planLayer = L.layerGroup().addTo(map);
+  function planAreas(n) {
+    const h = state.home, R = state.settings.radiusKm;
+    if (!D.site) return [];
+    const aur = n.lvl && n.lvl.s >= 0.45;
+    const cells = [];
+    for (let lat = h.lat - R / 111.2; lat <= h.lat + R / 111.2; lat += 0.04) {
+      const cosl = Math.cos(U.rad(lat));
+      for (let lon = h.lon - R / (111.2 * cosl); lon <= h.lon + R / (111.2 * cosl); lon += 0.04 / cosl) {
+        const d = U.distKm(h, { lat, lon });
+        if (d > R) continue;
+        const s = D.siteAt(lat, lon);
+        if (s == null) continue;
+        const reach = aur ? Sky.reachFactor(n.kp, Sky.magLat(lat, lon)) : 1;
+        cells.push({ lat, lon, d, site: s, v: reach * Math.pow(s, 1.5) * (1 - 0.3 * Math.pow(d / R, 1.5)) });
+      }
+    }
+    cells.sort((a, b) => b.v - a.v);
+    const out = [];
+    for (const c of cells) { if (out.length >= 3) break; if (out.some((o) => U.distKm(o, c) < 25)) continue; out.push({ ...c, zone: null, name: null }); }
+    return out;
+  }
+  function drawPlan() {
+    planLayer.clearLayers();
+    const p = state.plan;
+    if (!p) return;
+    p.areas.forEach((a, i) => {
+      const m = L.marker([a.lat, a.lon], { icon: divIcon(`<div class="mk mk-plan">${'ABC'[i]}</div>`, 28), title: a.name || 'Dark area', zIndexOffset: 900 });
+      m.on('click', () => app.inspect(a.lat, a.lon, { kind: 'pin', kindLabel: `Option ${'ABC'[i]} for ${U.fmtDate(p.from)}`, title: a.name || 'Dark area', name: a.name }));
+      planLayer.addLayer(m);
+    });
+  }
+  app.planNight = async (n) => {
+    if (!state.home) { app.showWelcome(); return; }
+    if (!D.site && D.grid) { try { await D.buildSite(D.grid); } catch (e) { /* map still works */ } }
+    const inRange = !!D.grid && n.to < D.grid.t[D.grid.t.length - 1];
+    state.plan = { ...n, mid: (n.from + n.to) / 2, assume: !inRange, areas: [] };
+    state.plan.areas = planAreas(n);
+    if (!state.settings.layers.best) { state.settings.layers.best = true; save('settings'); applyLayers(); }
+    if (inRange) app.setTime(U.floorHour(n.from) + 1.5 * U.HOUR, { live: false, plan: true }); else updateBest();
+    drawPlan();
+    UI.setTab('tonight');
+    UI.renderNights();
+    if (state.plan.areas.length) {
+      const b = L.latLngBounds(state.plan.areas.map((a) => [a.lat, a.lon]));
+      b.extend([state.home.lat, state.home.lon]);
+      app.flyToBounds(b);
+    }
+    for (const a of state.plan.areas) {
+      D.lpZone(a.lat, a.lon).then((z) => { a.zone = z; UI.renderNights(); });
+      D.placeName(a.lat, a.lon).then((nm) => { a.name = nm ? `Dark ground near ${nm}` : 'Dark ground'; drawPlan(); UI.renderNights(); });
+    }
+  };
+  app.clearPlan = (back = true) => {
+    if (!state.plan) return;
+    state.plan = null;
+    planLayer.clearLayers();
+    UI.renderNights();
+    if (back) app.setTime(Date.now(), { live: true }); else updateBest();
+  };
+
   // ---------- Journal ----------
   app.addLog = (e) => { state.log.push(e); save('log'); UI.renderLog(); UI.toast('Saved to your journal.'); };
   app.removeLog = (id) => {
@@ -444,7 +578,8 @@
 
   // ---------- Time and playback ----------
   let playing = false, lastInspectHour = null;
-  app.setTime = (t, { live = false } = {}) => {
+  app.setTime = (t, { live = false, plan = false } = {}) => {
+    if (state.plan && !plan) app.clearPlan(false);
     state.time = t;
     state.live = live;
     if (fx) fx.setCloudTime(t);
@@ -464,12 +599,15 @@
     fx.setBest(state.settings.layers.best && ready ? 1 : 0);
     if (!g) return;
     const c = { lat: (g.south + g.north) / 2, lon: (g.west + g.east) / 2 };
-    const t = state.time;
+    const pl = state.plan;
+    const t = pl ? pl.mid : state.time;
     const sun = Sky.sunAlt(t, c.lat, c.lon), mp = Sky.moonPos(t, c.lat, c.lon), mi = Sky.moonIllum(t);
     fx.setBestParams({
-      kp: D.kpAt(t) ?? 0,
-      mode: app.mode() === 'stars' ? 1 : 0,
-      dark: [Sky.darkFactor(sun, 'aurora'), Sky.darkFactor(sun, 'stars'), Sky.moonFactor(mp.alt, mi.fraction, 'aurora'), Sky.moonFactor(mp.alt, mi.fraction, 'stars')],
+      kp: pl ? (pl.kp ?? 0) : (D.kpAt(t) ?? 0),
+      mode: pl ? (pl.lvl && pl.lvl.s >= 0.45 ? 0 : 1) : app.mode() === 'stars' ? 1 : 0,
+      assume: pl && pl.assume ? 1 : 0,
+      // when planning a night the map answers "where": moonlight is the same everywhere, so the card covers it
+      dark: pl ? [1, 1, 1, 1] : [Sky.darkFactor(sun, 'aurora'), Sky.darkFactor(sun, 'stars'), Sky.moonFactor(mp.alt, mi.fraction, 'aurora'), Sky.moonFactor(mp.alt, mi.fraction, 'stars')],
     });
     fxDirty = true;
   }
@@ -590,6 +728,8 @@
     $('#homeChipText').textContent = state.home.name;
     if (fly) setTimeout(() => app.flyTo(state.home.lat, state.home.lon, 8, { duration: 2.4 }), 300);
     D.loadCloudGrid(state.home.lat, state.home.lon).catch((e) => console.warn('Cloud grid failed', e));
+    app.clearPlan(false);
+    refreshNights();
     UI.renderTonight();
     UI.rebuildTimeline();
     app.defaultTime();
@@ -883,6 +1023,7 @@
     { k: 'outlook', every: 6 * U.HOUR, run: D.loadOutlook },
     { k: 'wx', every: 30 * U.MIN, run: refreshWeather },
     { k: 'grid', every: 90 * U.MIN, run: refreshGrid },
+    { k: 'nights', every: 3 * U.HOUR, run: refreshNights },
   ];
   const lastRun = {}, running = {};
   async function runJob(j) {
@@ -914,7 +1055,7 @@
     if (state.inspect) UI.renderInspector(state.inspect);
     checkAuroraAlert();
   });
-  AA.on('kp', () => { UI.renderLive(); UI.renderTonight(); UI.rebuildTimeline(); UI.renderSpace(); UI.renderLegend(); drawReach(); updateBest(); checkAuroraAlert(); });
+  AA.on('kp', () => { app.recomputeNights(); UI.renderLive(); UI.renderTonight(); UI.rebuildTimeline(); UI.renderSpace(); UI.renderLegend(); drawReach(); updateBest(); checkAuroraAlert(); });
   AA.on('site', (s) => { if (fx) fx.setSite(s); updateBest(); if (state.inspect) UI.renderInspector(state.inspect); });
   AA.on('sw', () => {
     UI.renderLive();
@@ -924,7 +1065,7 @@
   });
   AA.on('hp', () => { UI.renderTonight(); UI.renderSpace(); });
   AA.on('alerts', () => UI.renderSpace());
-  AA.on('outlook', () => UI.renderSpace());
+  AA.on('outlook', () => { UI.renderSpace(); if (state.home) refreshNights(); });
   AA.on('grid', (g) => {
     if (fx) { fx.setCloudGrid(g); fx.setCloudTime(state.time); }
     if (!D.site || D.site.key !== g.key) D.buildSite(g).catch((e) => console.warn('Darkness grid failed', e));
@@ -1030,6 +1171,7 @@
     UI.bindSpots();
     UI.bindLog();
     UI.bindTimeline();
+    UI.bindNights();
     bindUI();
     bindWelcome();
     const tab = U.store.get('aa.tab', 'tonight');

@@ -1,19 +1,19 @@
 /* Aurora Atlas service worker: opens offline at a dark spot with the last forecast it saw.
    App files: network first, so updates show up right away. Map tiles: cached as you browse.
    Live data: network first, falling back to the last copy. */
-const SHELL_CACHE = 'aa-shell-v11';
+const SHELL_CACHE = 'aa-shell-v14';
 const TILE_CACHE = 'aa-tiles';
 const DATA_CACHE = 'aa-data';
 const SHELL = [
   './',
   './index.html',
-  './styles.css?v=11',
-  './js/util.js?v=11',
-  './js/sky.js?v=11',
-  './js/data.js?v=11',
-  './js/fx.js?v=11',
-  './js/ui.js?v=11',
-  './js/app.js?v=11',
+  './styles.css?v=14',
+  './js/util.js?v=14',
+  './js/sky.js?v=14',
+  './js/data.js?v=14',
+  './js/fx.js?v=14',
+  './js/ui.js?v=14',
+  './js/app.js?v=14',
   './manifest.webmanifest',
   './icons/icon-192.png',
 ];
