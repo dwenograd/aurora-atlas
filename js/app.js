@@ -614,7 +614,7 @@
         const first = ul.querySelector('button');
         if (first) first.focus();
       } catch (err) {
-        ul.innerHTML = '<li class="none">Search is not responding. Check the connection, or pick on the map.</li>';
+        ul.innerHTML = '<li class="none">The place search did not answer. Try again in a moment, or pick on the map.</li>';
       }
     });
     $('#homeResults').addEventListener('click', (e) => {
@@ -1042,6 +1042,9 @@
     if (state.home) app.defaultTime();
     const importing = checkImport();
     if (!state.home && !importing) app.showWelcome();
+    if (location.protocol === 'file:') {
+      UI.toast('This is the local copy of the file. The live site has everything working.', { timeout: 0, action: { label: 'Open live site', run: () => { location.href = SITE_URL; } } });
+    }
     tick();
     setInterval(tick, 15e3);
     requestAnimationFrame(frame);

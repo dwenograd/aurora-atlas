@@ -433,10 +433,19 @@
   };
 
   // ---------- Place search ----------
+  // Town search: Open-Meteo first (clean town results), Photon when it fails or finds nothing
   D.geocode = async (q) => {
     const lang = (navigator.language || 'en').slice(0, 2);
-    const j = await U.fetchJSON(`${D.URL.geo}?name=${encodeURIComponent(q)}&count=7&language=${lang}&format=json`);
-    return (j.results || []).map((r) => ({ name: r.name, lat: r.latitude, lon: r.longitude, admin: [r.admin1, r.country_code].filter(Boolean).join(', ') }));
+    try {
+      const j = await U.fetchJSON(`${D.URL.geo}?name=${encodeURIComponent(q)}&count=7&language=${lang}&format=json`, { timeout: 10000 });
+      const r = (j.results || []).map((x) => ({ name: x.name, lat: x.latitude, lon: x.longitude, admin: [x.admin1, x.country_code].filter(Boolean).join(', ') }));
+      if (r.length) return r;
+    } catch (e) { console.warn('Open-Meteo place search failed, trying Photon', e); }
+    const j = await U.fetchJSON(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=7&lang=en&osm_tag=place`, { timeout: 12000 });
+    return (j.features || []).map((f) => {
+      const p = f.properties || {}, xy = f.geometry && f.geometry.coordinates;
+      return xy && p.name ? { name: p.name, lat: +xy[1], lon: +xy[0], admin: [p.state, String(p.countrycode || '').toUpperCase()].filter(Boolean).join(', ') } : null;
+    }).filter(Boolean);
   };
   D.placeName = async (lat, lon) => {
     try {
