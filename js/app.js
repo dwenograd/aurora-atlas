@@ -614,7 +614,7 @@
         const first = ul.querySelector('button');
         if (first) first.focus();
       } catch (err) {
-        ul.innerHTML = '<li class="none">The place search did not answer. Try again in a moment, or pick on the map.</li>';
+        ul.innerHTML = '<li class="none">The place search did not answer. Try again in a moment, or pick on the map.<br><small>(' + U.esc(String(err && err.message || err)) + ' · ' + U.esc(location.protocol + '//' + location.host) + ')</small></li>';
       }
     });
     $('#homeResults').addEventListener('click', (e) => {
