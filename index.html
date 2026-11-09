@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Aurora Atlas</title>
+  <meta name="description" content="Live aurora forecast, cloud cover, light pollution and dark-sky spots around home.">
+  <meta name="theme-color" content="#04060c">
+  <meta name="color-scheme" content="dark">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Aurora Atlas">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400..700;1,6..96,400..700&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400..600&display=swap">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+  <link rel="stylesheet" href="styles.css?v=9">
+</head>
+<body>
+  <!-- Icon sprite -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11.2 12 4.8l8 6.4"/><path d="M6.2 9.8V19h11.6V9.8"/><path d="M10 19v-4.8h4V19"/></symbol>
+      <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3.6 2.55 5.2 5.75.83-4.16 4.05.98 5.72L12 16.7l-5.12 2.7.98-5.72L3.7 9.63l5.75-.83z"/></symbol>
+      <symbol id="i-aurora" viewBox="0 0 24 24"><path d="M4.5 19c0-6 1.6-10.4 4-13.5M10.5 19c0-7 1-11.4 3-14M16.5 19c0-6 1.4-9.6 3.5-12"/><path d="M3 20.5h18"/></symbol>
+      <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7.2 18.5h9.6a4.2 4.2 0 0 0 .55-8.36A6.1 6.1 0 0 0 5.9 9.9a4.35 4.35 0 0 0 1.3 8.6z"/></symbol>
+      <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9.2 17.6h5.6M10.2 20.6h3.6"/><path d="M12 3.4a5.9 5.9 0 0 0-3.6 10.6c.62.5 1 1.2 1 2v.2h5.2V16c0-.8.38-1.5 1-2A5.9 5.9 0 0 0 12 3.4z"/></symbol>
+      <symbol id="i-pin" viewBox="0 0 24 24"><path d="M12 21s-6.4-5.9-6.4-11a6.4 6.4 0 0 1 12.8 0c0 5.1-6.4 11-6.4 11z"/><circle cx="12" cy="10" r="2.3"/></symbol>
+      <symbol id="i-mountain" viewBox="0 0 24 24"><path d="m2.8 19 6.6-11.2 4.1 6.6 2.4-3.4L21.2 19z"/></symbol>
+      <symbol id="i-satellite" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M3.6 10.5c3 .9 5.4.4 7.6-1.4s3.6-2.4 6-1.6M6 17.2c2.6-1.4 4.6-1.2 6.6.2s4.4 1.7 6.6.4"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.3"/><path d="m20 20-4.6-4.6"/></symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h9.5M18.5 7H20M4 17h3.5M12.5 17H20"/><circle cx="16" cy="7" r="2.2"/><circle cx="10" cy="17" r="2.2"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2.6 12s3.5-6.4 9.4-6.4 9.4 6.4 9.4 6.4-3.5 6.4-9.4 6.4S2.6 12 2.6 12z"/><circle cx="12" cy="12" r="2.7"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M8.2 5.6v12.8L18.6 12z" fill="currentColor" stroke="none"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8.6 5.8v12.4M15.4 5.8v12.4" stroke-width="2.6"/></symbol>
+      <symbol id="i-share" viewBox="0 0 24 24"><circle cx="6.2" cy="12" r="2.3"/><circle cx="17.8" cy="6.2" r="2.3"/><circle cx="17.8" cy="17.8" r="2.3"/><path d="m8.3 10.9 7.4-3.7M8.3 13.1l7.4 3.7"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5.2v13.6M5.2 12h13.6"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4.5 7h15M10 7V4.6h4V7M6.6 7l.9 12.4h9l.9-12.4"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="m6.5 6.5 11 11M17.5 6.5l-11 11"/></symbol>
+      <symbol id="i-route" viewBox="0 0 24 24"><circle cx="6" cy="17.8" r="2.1"/><circle cx="18" cy="6.2" r="2.1"/><path d="M8.1 17.8h7.4a3 3 0 0 0 0-6H8.5a3 3 0 0 1 0-6h7.4"/></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24"><path d="M19.2 14.6A7.6 7.6 0 1 1 9.4 4.8a6.1 6.1 0 0 0 9.8 9.8z"/></symbol>
+      <symbol id="i-locate" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.4"/><circle cx="12" cy="12" r="1.8"/><path d="M12 2.4v3.2M12 18.4v3.2M2.4 12h3.2M18.4 12h3.2"/></symbol>
+      <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6.2 16.2V11a5.8 5.8 0 0 1 11.6 0v5.2l1.6 2.1H4.6z"/><path d="M10 20.6a2 2 0 0 0 4 0"/></symbol>
+      <symbol id="i-book" viewBox="0 0 24 24"><path d="M5.2 4.6h10.4a2.4 2.4 0 0 1 2.4 2.4v12.6H7.6a2.4 2.4 0 0 1-2.4-2.4z"/><path d="M5.2 17.2a2.4 2.4 0 0 1 2.4-2.4H18"/></symbol>
+      <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3.2c.6 4.4 2.4 6.3 6.8 6.8-4.4.6-6.2 2.4-6.8 6.8-.6-4.4-2.4-6.2-6.8-6.8 4.4-.5 6.2-2.4 6.8-6.8z"/><path d="M18.5 15.5c.25 1.6.9 2.25 2.5 2.5-1.6.25-2.25.9-2.5 2.5-.25-1.6-.9-2.25-2.5-2.5 1.6-.25 2.25-.9 2.5-2.5z"/></symbol>
+      <symbol id="i-binoculars" viewBox="0 0 24 24"><circle cx="7" cy="15.4" r="3.4"/><circle cx="17" cy="15.4" r="3.4"/><path d="M10.4 15.4h3.2M4.6 12.6l2-6.4h3.2v6.6M19.4 12.6l-2-6.4h-3.2v6.6"/></symbol>
+      <symbol id="i-tent" viewBox="0 0 24 24"><path d="M3 19.2 12 5l9 14.2z"/><path d="m9.4 19.2 2.6-5 2.6 5"/></symbol>
+      <symbol id="i-sign" viewBox="0 0 24 24"><path d="M12 21V3.6M12 5.6h6.2l2 2.2-2 2.2H12M12 12H5.8l-2 2.2 2 2.2H12"/></symbol>
+      <symbol id="i-boat" viewBox="0 0 24 24"><path d="M3 15.2h18l-2.6 4H5.6z"/><path d="M12 15.2V4.4l6 8.6h-6"/></symbol>
+      <symbol id="i-wave" viewBox="0 0 24 24"><path d="M2.5 14.6c1.9 0 1.9-1.4 3.9-1.4s1.9 1.4 3.9 1.4 1.9-1.4 3.9-1.4 1.9 1.4 3.9 1.4 1.9-1.4 3.4-1.4M2.5 18.8c1.9 0 1.9-1.4 3.9-1.4s1.9 1.4 3.9 1.4 1.9-1.4 3.9-1.4 1.9 1.4 3.9 1.4 1.9-1.4 3.4-1.4"/><circle cx="15.8" cy="7.2" r="2.5"/></symbol>
+      <symbol id="i-telescope" viewBox="0 0 24 24"><path d="m3.8 13.2 12.4-6.1 1.9 3.9-12.4 6.1z"/><path d="m10.8 15.4-3.1 5.6M13 14.4l3 6.6M18.1 9.2l2.5-1.2"/></symbol>
+      <symbol id="i-tree" viewBox="0 0 24 24"><path d="M12 3 6.2 11h3.2L5.2 17h13.6l-4.2-6h3.2z"/><path d="M12 17v4"/></symbol>
+      <symbol id="i-peak" viewBox="0 0 24 24"><path d="m3 19 7-12 3.4 5.4 1.6-2.4 6 9z"/><path d="m8.4 9.6 1.6 1.6 1.4-1.2"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.2" y="8.2" width="11" height="12" rx="2"/><path d="M5 15.4V5.6A1.6 1.6 0 0 1 6.6 4h8.8"/></symbol>
+      <symbol id="i-chev" viewBox="0 0 24 24"><path d="m9.5 6 6 6-6 6"/></symbol>
+      <symbol id="i-compass" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="m12 6.4 2.3 5.6L12 17.6 9.7 12z"/></symbol>
+      <symbol id="i-thermo" viewBox="0 0 24 24"><path d="M10 14.4V5.2a2 2 0 0 1 4 0v9.2a4 4 0 1 1-4 0z"/></symbol>
+      <symbol id="i-drop" viewBox="0 0 24 24"><path d="M12 3.6s-6 6.5-6 10.6a6 6 0 0 0 12 0c0-4.1-6-10.6-6-10.6z"/></symbol>
+      <symbol id="i-wind" viewBox="0 0 24 24"><path d="M3 9h11.2a2.6 2.6 0 1 0-2.6-2.6M3 13h15a2.6 2.6 0 1 1-2.6 2.6M3 17h7"/></symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.4 5.4l1.5 1.5M17.1 17.1l1.5 1.5M5.4 18.6l1.5-1.5M17.1 6.9l1.5-1.5"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.4 4.4L19 7.4"/></symbol>
+      <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5.2 12h13.6"/></symbol>
+      <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 11v5.2M12 7.6v.2"/></symbol>
+    </defs>
+  </svg>
+
+  <div class="app" id="app">
+    <div id="map" class="map" role="application" aria-label="Aurora map"></div>
+
+    <header class="topbar">
+      <div class="brand glass">
+        <div class="wordmark" aria-label="Aurora Atlas"><em>Aurora</em><span>Atlas</span></div>
+        <button class="home-chip" id="homeChip" type="button" title="Home base">
+          <svg class="ic"><use href="#i-home"/></svg><span id="homeChipText">Set home</span>
+        </button>
+      </div>
+
+      <div class="live glass" id="live" aria-live="polite">
+        <div class="live-seg" id="liveKp" title="Planetary K-index, estimated now (NOAA)">
+          <span class="live-k">Kp now</span><span class="live-v mono"><i class="dot" id="liveKpDot"></i><b id="liveKpVal">–</b><em id="liveKpTag"></em></span>
+        </div>
+        <div class="live-seg" title="Chance of seeing aurora from home in the next half hour, including low on the horizon (NOAA OVATION)">
+          <span class="live-k">Aurora</span><span class="live-v mono"><b id="liveAur">–</b></span>
+        </div>
+        <div class="live-seg hide-md" title="Interplanetary magnetic field Bz. Southward (negative) lets solar wind energy in.">
+          <span class="live-k">Bz</span><span class="live-v mono"><b id="liveBz">–</b></span>
+        </div>
+        <div class="live-seg hide-md" title="Solar wind speed at the L1 monitor">
+          <span class="live-k">Solar wind</span><span class="live-v mono"><b id="liveWind">–</b></span>
+        </div>
+        <div class="live-seg" title="Cloud cover at home this hour (Open-Meteo)">
+          <span class="live-k">Clouds</span><span class="live-v mono"><b id="liveCloud">–</b></span>
+        </div>
+        <div class="live-seg live-upd hide-sm"><span class="pulse" aria-hidden="true"></span><span id="liveUpdated">Connecting…</span></div>
+      </div>
+
+      <div class="actions glass">
+        <button class="icon-btn" id="searchBtn" type="button" title="Search places" aria-label="Search places"><svg class="ic"><use href="#i-search"/></svg></button>
+        <button class="icon-btn" id="alertBtn" type="button" title="Aurora alerts" aria-label="Aurora alerts" aria-pressed="false"><svg class="ic"><use href="#i-bell"/></svg></button>
+        <button class="icon-btn" id="nightBtn" type="button" title="Night vision (red) mode" aria-label="Night vision mode" aria-pressed="false"><svg class="ic"><use href="#i-eye"/></svg></button>
+        <button class="icon-btn" id="settingsBtn" type="button" title="Settings and data sources" aria-label="Settings"><svg class="ic"><use href="#i-sliders"/></svg></button>
+      </div>
+    </header>
+
+    <div class="rightcol">
+    <div class="layers" id="layers" role="group" aria-label="Map layers">
+      <div class="base-seg glass" role="radiogroup" aria-label="Base map">
+        <button type="button" role="radio" data-base="night" aria-checked="true" title="Night map"><svg class="ic"><use href="#i-moon"/></svg><span>Night</span></button>
+        <button type="button" role="radio" data-base="terrain" aria-checked="false" title="Terrain shading"><svg class="ic"><use href="#i-mountain"/></svg><span>Terrain</span></button>
+        <button type="button" role="radio" data-base="satellite" aria-checked="false" title="Satellite imagery"><svg class="ic"><use href="#i-satellite"/></svg><span>Satellite</span></button>
+      </div>
+      <button class="chip glass" type="button" data-layer="best" aria-pressed="true" title="Where it's clear and dark, and far enough north for the aurora"><i class="chip-dot best"></i><svg class="ic"><use href="#i-sparkle"/></svg><span>Best sky</span></button>
+      <button class="chip glass" type="button" data-layer="aurora" aria-pressed="true" title="NOAA's aurora forecast and how far south it reaches"><i class="chip-dot aur"></i><svg class="ic"><use href="#i-aurora"/></svg><span>Aurora</span></button>
+      <button class="chip glass" type="button" data-layer="clouds" aria-pressed="false" title="Forecast cloud cover"><i class="chip-dot cld"></i><svg class="ic"><use href="#i-cloud"/></svg><span>Clouds</span></button>
+      <button class="chip glass" type="button" data-layer="lp" aria-pressed="false" title="Light pollution atlas"><i class="chip-dot lp"></i><svg class="ic"><use href="#i-bulb"/></svg><span>Light pollution</span></button>
+      <button class="chip glass" type="button" data-layer="spots" aria-pressed="true"><i class="chip-dot spt"></i><svg class="ic"><use href="#i-pin"/></svg><span>Spots</span></button>
+    </div>
+
+    <div class="mapctl glass" role="group" aria-label="Map controls">
+      <button class="icon-btn" id="zoomIn" type="button" aria-label="Zoom in"><svg class="ic"><use href="#i-plus"/></svg></button>
+      <button class="icon-btn" id="zoomOut" type="button" aria-label="Zoom out"><svg class="ic"><use href="#i-minus"/></svg></button>
+      <button class="icon-btn" id="goHome" type="button" aria-label="Back to home" title="Back to home"><svg class="ic"><use href="#i-home"/></svg></button>
+      <button class="icon-btn" id="legendBtn" type="button" aria-label="Show map legend" title="Map legend" aria-pressed="true"><svg class="ic"><use href="#i-info"/></svg></button>
+    </div>
+    </div>
+
+    <aside class="panel glass" id="panel" aria-label="Sky planner">
+      <button class="sheet-grip" id="sheetGrip" type="button" aria-label="Expand panel"><i></i></button>
+      <nav class="tabs" role="tablist" aria-label="Sections">
+        <button class="tab-btn" role="tab" id="t-tonight" aria-controls="tab-tonight" aria-selected="true" data-tab="tonight"><svg class="ic"><use href="#i-moon"/></svg>Tonight</button>
+        <button class="tab-btn" role="tab" id="t-spots" aria-controls="tab-spots" aria-selected="false" data-tab="spots"><svg class="ic"><use href="#i-pin"/></svg>Spots</button>
+        <button class="tab-btn" role="tab" id="t-space" aria-controls="tab-space" aria-selected="false" data-tab="space"><svg class="ic"><use href="#i-sun"/></svg>Space</button>
+        <button class="tab-btn" role="tab" id="t-log" aria-controls="tab-log" aria-selected="false" data-tab="log"><svg class="ic"><use href="#i-book"/></svg>Journal</button>
+        <i class="tab-ink" id="tabInk" aria-hidden="true"></i>
+      </nav>
+
+      <div class="tab-body" id="tab-tonight" role="tabpanel" aria-labelledby="t-tonight">
+        <div class="place-row">
+          <div class="place">
+            <span class="eyebrow" id="placeKind">Home base</span>
+            <h2 class="place-name" id="placeName">Set your home</h2>
+            <span class="place-sub mono" id="placeSub"></span>
+          </div>
+          <div class="seg" role="radiogroup" aria-label="Plan for">
+            <button type="button" role="radio" data-mode="auto" aria-checked="true" title="Aurora when it's in reach, stars otherwise">Auto</button>
+            <button type="button" role="radio" data-mode="aurora" aria-checked="false">Aurora</button>
+            <button type="button" role="radio" data-mode="stars" aria-checked="false">Stars</button>
+          </div>
+        </div>
+        <button class="back-home" id="backHome" type="button" hidden><svg class="ic"><use href="#i-home"/></svg>Back to home</button>
+        <div class="verdict" id="verdict"></div>
+        <div class="facts" id="facts"></div>
+        <div class="sec">
+          <div class="sec-head"><h3>Tonight, hour by hour</h3><span class="sec-note" id="hourlyNote"></span></div>
+          <div class="chart-wrap"><canvas id="hourlyChart" class="hourly-chart" aria-label="Hourly chart of clouds, moon and viewing score for tonight"></canvas><div class="chart-tip" id="hourlyTip" hidden></div></div>
+          <div class="chart-key" id="hourlyKey"></div>
+        </div>
+        <div class="sec" id="auroraNow"></div>
+      </div>
+
+      <div class="tab-body" id="tab-spots" role="tabpanel" aria-labelledby="t-spots" hidden>
+        <div class="sec-head"><h3>Dark spots near home</h3></div>
+        <p class="lead-note">Finds the darkest, clearest ground around home on the Best sky map, then the nearest real place to stand there: viewpoints, campgrounds, beaches, boat launches and parks from OpenStreetMap. Ranked by darkness, an open view north, distance and tonight's clouds.</p>
+        <div class="finder">
+          <label for="radiusSel">Within</label>
+          <select id="radiusSel"></select>
+          <button class="btn primary" id="findBtn" type="button"><svg class="ic"><use href="#i-sparkle"/></svg>Find spots</button>
+        </div>
+        <div class="finder-status" id="finderStatus" hidden></div>
+        <ol class="spot-list" id="suggestList"></ol>
+        <div class="sec-head saved-head"><h3>Our spots</h3><div class="sec-actions"><button class="btn ghost sm" id="shareBtn" type="button"><svg class="ic"><use href="#i-share"/></svg>Share</button></div></div>
+        <ul class="spot-list" id="savedList"></ul>
+      </div>
+
+      <div class="tab-body" id="tab-space" role="tabpanel" aria-labelledby="t-space" hidden>
+        <div class="kp-block">
+          <div class="kp-gauge" id="kpGauge"></div>
+          <div class="kp-text" id="kpText"></div>
+        </div>
+        <div class="sec">
+          <div class="sec-head"><h3>Solar wind</h3><span class="sec-note" id="swNote"></span></div>
+          <div class="sw-wrap"><canvas id="swCanvas" class="sw-canvas" aria-label="Animation of the solar wind reaching Earth"></canvas></div>
+          <div class="sw-readouts" id="swReadouts"></div>
+        </div>
+        <div class="sec">
+          <div class="sec-head"><h3>Kp forecast</h3><span class="sec-note" id="kpNeedNote"></span></div>
+          <div class="kp-chart" id="kpChart"></div>
+        </div>
+        <div class="sec">
+          <div class="sec-head"><h3>27-day outlook</h3><span class="sec-note">NOAA, issued weekly</span></div>
+          <div class="outlook" id="outlook"></div>
+        </div>
+        <div class="sec">
+          <div class="sec-head"><h3>NOAA alerts</h3></div>
+          <ul class="alerts" id="alertList"></ul>
+        </div>
+      </div>
+
+      <div class="tab-body" id="tab-log" role="tabpanel" aria-labelledby="t-log" hidden>
+        <div class="sec-head"><h3>Our nights out</h3><div class="sec-actions"><button class="btn primary sm" id="logNewBtn" type="button"><svg class="ic"><use href="#i-plus"/></svg>Log a night</button></div></div>
+        <form class="log-form" id="logForm" hidden></form>
+        <div class="log-stats" id="logStats"></div>
+        <ul class="log-list" id="logList"></ul>
+      </div>
+    </aside>
+
+    <div class="timeline glass" id="timeline">
+      <button class="tl-play" id="tlPlay" type="button" aria-label="Play the forecast"><svg class="ic"><use href="#i-play"/></svg></button>
+      <div class="tl-body">
+        <div class="tl-head">
+          <span class="tl-time" id="tlTime">Now</span>
+          <span class="tl-note" id="tlNote"></span>
+          <button class="tl-now" id="tlNow" type="button" hidden>Back to now</button>
+        </div>
+        <canvas id="tlCanvas" class="tl-canvas" tabindex="0" role="slider" aria-label="Forecast time" aria-valuemin="0" aria-valuemax="48" aria-valuenow="0"></canvas>
+      </div>
+    </div>
+
+    <div class="legend glass" id="legend"></div>
+    <div class="inspector glass" id="inspector" hidden></div>
+    <div class="toasts" id="toasts" aria-live="polite"></div>
+  </div>
+
+  <div class="welcome" id="welcome" hidden>
+    <canvas class="welcome-sky" id="welcomeSky" aria-hidden="true"></canvas>
+    <div class="welcome-inner">
+      <h1 class="welcome-title"><em>Aurora</em> Atlas</h1>
+      <p class="welcome-lede">Live aurora forecasts, cloud cover and dark-sky spots around your home, so you can find a clear, dark place to watch the sky together.</p>
+      <form class="home-search" id="homeForm" autocomplete="off">
+        <label for="homeQuery">Where's home?</label>
+        <div class="search-field">
+          <svg class="ic"><use href="#i-search"/></svg>
+          <input id="homeQuery" name="homeQuery" type="search" placeholder="Town or city, like Tacoma" required>
+          <button class="btn primary" type="submit">Search</button>
+        </div>
+        <ul class="search-results" id="homeResults" hidden></ul>
+      </form>
+      <div class="welcome-actions">
+        <button class="btn ghost" id="useLocation" type="button"><svg class="ic"><use href="#i-locate"/></svg>Use my location</button>
+        <button class="btn ghost" id="pickOnMap" type="button"><svg class="ic"><use href="#i-pin"/></svg>Pick on the map</button>
+      </div>
+      <p class="fine">Home is saved in this browser only.</p>
+    </div>
+  </div>
+
+  <div class="modal" id="modal" hidden>
+    <div class="modal-backdrop" data-close></div>
+    <div class="modal-card glass" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modal-head">
+        <h2 id="modalTitle"></h2>
+        <button class="icon-btn" type="button" data-close aria-label="Close"><svg class="ic"><use href="#i-close"/></svg></button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+    </div>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/suncalc/1.9.0/suncalc.min.js"></script>
+  <script src="js/util.js?v=9"></script>
+  <script src="js/sky.js?v=9"></script>
+  <script src="js/data.js?v=9"></script>
+  <script src="js/fx.js?v=9"></script>
+  <script src="js/ui.js?v=9"></script>
+  <script src="js/app.js?v=9"></script>
+</body>
+</html>
