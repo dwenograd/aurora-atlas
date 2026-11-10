@@ -90,7 +90,7 @@
       const v = Sky.ovInView(home.lat, home.lon);
       if (v) $('#liveAur').textContent = U.pct(v.inView);
       const info = app().placeInfo(app().homePlace());
-      const w = info.wx ? D.wxAt(info.wx, Date.now()) : null;
+      const w = info.wx ? D.wxAt(info.wx, U.floorHour(Date.now())) : null; // this hour, like the timeline and the hourly chart
       $('#liveCloud').textContent = w && w.cc != null ? `${Math.round(w.cc)}%` : '–';
     } else {
       $('#liveAur').textContent = '–';
@@ -125,7 +125,7 @@
     v.innerHTML = `<div class="gauge"><svg viewBox="0 0 116 116" aria-hidden="true">
       <defs>
         <linearGradient id="ggA" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#37d3c9"/><stop offset="1" stop-color="#7af7b7"/></linearGradient>
-        <linearGradient id="ggS" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#8ea6ff"/><stop offset="1" stop-color="#e6ecff"/></linearGradient>
+        <linearGradient id="ggS" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#c98a2b"/><stop offset="1" stop-color="#ffe08a"/></linearGradient>
       </defs>
       <circle class="g-track" cx="58" cy="58" r="${r}" fill="none" stroke-width="7"/>
       <circle class="g-val" id="gVal" cx="58" cy="58" r="${r}" fill="none" stroke="url(#ggA)" stroke-width="7" stroke-linecap="round" stroke-dasharray="${v._C.toFixed(2)}" style="stroke-dashoffset:${v._C.toFixed(2)}"/>
@@ -140,7 +140,7 @@
     const v = ensureVerdict();
     const g = $('#gVal'), m = $('#gMini');
     g.setAttribute('stroke', mode === 'stars' ? 'url(#ggS)' : 'url(#ggA)');
-    m.setAttribute('stroke', mode === 'stars' ? 'rgba(98,240,166,.85)' : 'rgba(165,140,255,.85)');
+    m.setAttribute('stroke', mode === 'stars' ? 'rgba(98,240,166,.85)' : 'rgba(255,204,97,.9)');
     const apply = () => {
       g.style.strokeDashoffset = String(v._C * (1 - U.clamp(val || 0, 0, 1)));
       m.style.strokeDashoffset = String(v._C2 * (1 - U.clamp(mini || 0, 0, 1)));
@@ -247,6 +247,7 @@
     $('#vBody').textContent = cp.body;
     const win = $('#vWindow');
     win.hidden = !cp.window;
+    win.classList.toggle('stars', mode === 'stars');
     if (cp.window) win.innerHTML = `${icon('sparkle')}Best ${esc(cp.window)}`;
     $('#vOther').textContent = other.none ? '' : `${mode === 'stars' ? 'Aurora' : 'Stars'} tonight: ${Math.round(other.score * 100)} / 100`;
 
@@ -342,7 +343,7 @@
     // score bars
     const key = mode === 'stars' ? 'scoreS' : 'scoreA';
     const grd = ctx.createLinearGradient(0, plotBot, 0, plotTop);
-    if (mode === 'stars') { grd.addColorStop(0, 'rgba(142,166,255,0.55)'); grd.addColorStop(1, 'rgba(230,236,255,0.95)'); }
+    if (mode === 'stars') { grd.addColorStop(0, 'rgba(201,138,43,0.55)'); grd.addColorStop(1, 'rgba(255,229,154,0.95)'); }
     else { grd.addColorStop(0, 'rgba(55,211,201,0.5)'); grd.addColorStop(0.6, 'rgba(98,240,166,0.92)'); grd.addColorStop(1, 'rgba(165,140,255,0.95)'); }
     rows.forEach((r, i) => {
       const v = r[key];
@@ -394,7 +395,7 @@
     const every = cw < 22 ? 3 : 2;
     rows.forEach((r, i) => { if (i % every === 0) ctx.fillText(U.fmtHourTiny(r.t), i * cw + cw / 2, h - 5); });
     ctx.textAlign = 'left';
-    $('#hourlyKey').innerHTML = `<span><i style="background:rgba(190,202,226,.7)"></i>Cloud (high, mid, low)</span><span><i style="background:${mode === 'stars' ? '#c6d2ff' : 'linear-gradient(90deg,#37d3c9,#62f0a6)'}"></i>${mode === 'stars' ? 'Stargazing' : 'Aurora'} score</span><span><i style="background:repeating-linear-gradient(90deg,#f2e8cf 0 3px,transparent 3px 6px)"></i>Moon height</span>`;
+    $('#hourlyKey').innerHTML = `<span><i style="background:rgba(190,202,226,.7)"></i>Cloud (high, mid, low)</span><span><i style="background:${mode === 'stars' ? 'linear-gradient(90deg,#c98a2b,#ffe08a)' : 'linear-gradient(90deg,#37d3c9,#62f0a6)'}"></i>${mode === 'stars' ? 'Stargazing' : 'Aurora'} score</span><span><i style="background:repeating-linear-gradient(90deg,#f2e8cf 0 3px,transparent 3px 6px)"></i>Moon height</span>`;
     $('#hourlyNote').textContent = rows.some((r) => r.wx) ? 'Open-Meteo, NOAA Kp' : 'Loading clouds…';
   };
   function hourlyTip(e) {
@@ -1046,7 +1047,7 @@
     // score area rising from the bottom
     if (rows.length) {
       const grd = ctx.createLinearGradient(0, bot, 0, top);
-      if (mode === 'stars') { grd.addColorStop(0, 'rgba(142,166,255,0.15)'); grd.addColorStop(1, 'rgba(220,228,255,0.85)'); }
+      if (mode === 'stars') { grd.addColorStop(0, 'rgba(201,138,43,0.15)'); grd.addColorStop(1, 'rgba(255,224,138,0.88)'); }
       else { grd.addColorStop(0, 'rgba(55,211,201,0.15)'); grd.addColorStop(0.55, 'rgba(98,240,166,0.75)'); grd.addColorStop(1, 'rgba(165,140,255,0.9)'); }
       ctx.fillStyle = grd;
       ctx.beginPath();
@@ -1198,22 +1199,49 @@
     });
   };
 
-  // ---------- Legend ----------
+  // ---------- Map key ----------
+  // Two sizes: a one-line strip that is always on the map, and the full key with the scales.
   UI.renderLegend = () => {
-    const L = st().settings.layers;
+    const s = st(), L = s.settings.layers, a = app();
+    const info = a.keyInfo(), full = a.keyFull();
+    const box = $('#legend');
+    const showStars = L.best && (info.planned || s.settings.mode !== 'aurora');
+    const showAur = L.best && (info.planned || s.settings.mode !== 'stars');
+    const kpTxt = info.kp != null ? info.kp.toFixed(1) : null;
+    if (!full) {
+      const chips = [];
+      if (showStars) chips.push('<span class="kc"><i class="kd gold"></i>Stargazing</span>');
+      if (showAur) chips.push(info.inReach ? '<span class="kc"><i class="kd green"></i>Aurora viewing</span>' : '<span class="kc off"><i class="kd none"></i>Aurora out of reach</span>');
+      if (L.aurora && info.oval) chips.push('<span class="kc"><i class="kd curtain"></i>Aurora overhead</span>');
+      if (L.clouds) chips.push('<span class="kc"><i class="kd cloud"></i>Clouds</span>');
+      if (L.lp) chips.push('<span class="kc"><i class="kd lp"></i>Light pollution</span>');
+      box.innerHTML = chips.length ? `<button class="key-strip" type="button" id="keyStrip" title="Open the map key" aria-label="Map key: ${chips.map((c) => c.replace(/<[^>]+>/g, '')).join(', ')}. Open the full key">${chips.join('')}${icon('chev', 'ic ks-more')}</button>` : '';
+      return;
+    }
     const parts = [];
     if (L.best) {
-      const mode = app().mode();
-      parts.push(`<div class="lg-block"><div class="lg-title"><span>Best sky for ${mode === 'stars' ? 'stars' : 'aurora'}</span><span>${st().settings.mode === 'auto' ? 'Auto' : ''}</span></div>
-        <div class="lg-bar" style="background:linear-gradient(90deg,#0a0f1c,#1f8c9e 30%,#5beb99 62%,#ffcc61)"></div>
-        <div class="lg-ticks"><span>Poor</span><span>Fair</span><span>Good</span><span>Golden</span></div>
-        <div class="lg-note">${mode === 'stars' ? 'Clear sky × dark sky, at the timeline\'s hour.' : 'Clear sky × dark sky × how far south the forecast Kp reaches, at the timeline\'s hour.'}</div></div>`);
+      const modeTxt = info.planned ? 'Planned night' : s.settings.mode === 'auto' ? 'Auto' : s.settings.mode === 'aurora' ? 'Aurora only' : 'Stars only';
+      const needTxt = info.need != null && info.need <= 9 ? ` (home needs about ${info.need.toFixed(1)})` : '';
+      let note;
+      if (showStars && showAur) {
+        note = info.inReach
+          ? `Gold is clear, dark sky for stars. Green is where the aurora should show too${kpTxt ? `, at Kp ${kpTxt}` : ''}. Brighter is better.`
+          : `Gold is clear, dark sky for stars. No green ${kpTxt ? `at Kp ${kpTxt}: the aurora stays out of reach` : 'yet: the aurora is out of reach'}${needTxt}.`;
+      } else if (showAur) note = `Clear, dark sky that the aurora reaches${kpTxt ? ` at Kp ${kpTxt}` : ''}${info.inReach ? '' : `. Nothing in reach${needTxt}`}.`;
+      else note = 'Clear sky × dark sky, at the timeline\'s hour.';
+      parts.push(`<div class="lg-block"><div class="lg-title"><span>Best sky</span><span>${modeTxt}</span></div>
+        ${showStars ? `<div class="lg-name"><i class="kd gold"></i>Stargazing</div><div class="lg-bar" style="background:linear-gradient(90deg,#0a0f1c,#7a5320 28%,#e9b04a 62%,#ffe59a)"></div>
+        <div class="lg-ticks"><span>Poor</span><span>Fair</span><span>Good</span><span>Golden</span></div>` : ''}
+        ${showAur ? `<div class="lg-name"><i class="kd green"></i>Aurora viewing</div><div class="lg-bar" style="background:linear-gradient(90deg,#0a0f1c,#1a999e 28%,#3df0a3 62%,#bdffe0)"></div>
+        <div class="lg-ticks"><span>Unlikely</span><span>Possible</span><span>Likely</span><span>Strong</span></div>` : ''}
+        <div class="lg-note">${note}</div></div>`);
     }
     if (L.aurora) {
-      parts.push(`<div class="lg-block"><div class="lg-title"><span>Aurora chance overhead</span><span>NOAA</span></div>
+      parts.push(`<div class="lg-block"><div class="lg-title"><span>Aurora overhead</span><span>NOAA</span></div>
+        <div class="lg-name"><i class="kd curtain"></i>Moving curtains, next 30 minutes</div>
         <div class="lg-bar" style="background:linear-gradient(90deg,rgba(46,209,199,.2),#36d1c8 12%,#5cffa0 34%,#a37aff 72%,#ff6194)"></div>
         <div class="lg-ticks"><span>2%</span><span>15%</span><span>40%</span><span>70%+</span></div>
-        <div class="lg-title" style="margin:8px 0 0"><span><span style="color:#ffd38a;letter-spacing:2px">· · ·</span> Reach at the timeline's Kp</span></div></div>`);
+        <div class="lg-note"><span class="lg-dots">· · ·</span> Likely visible north of this line${kpTxt ? ` at Kp ${kpTxt}` : ''}.</div></div>`);
     }
     if (L.clouds) {
       parts.push(`<div class="lg-block"><div class="lg-title"><span>Cloud cover</span><span>Open-Meteo</span></div>
@@ -1230,7 +1258,8 @@
     const needCredits = !!attr && getComputedStyle(attr).display === 'none';
     const link = (href, text) => `<a href="${href}" target="_blank" rel="noopener">${text}</a>`;
     const credits = `<div class="lg-credits">Map: Esri, HERE, Garmin, © ${link('https://www.openstreetmap.org/copyright', 'OpenStreetMap')} contributors. Light pollution: ${link('https://djlorenz.github.io/astronomy/lp/', 'D. Lorenz')}. Aurora and Kp: ${link('https://www.swpc.noaa.gov', 'NOAA SWPC')}. Clouds: ${link('https://open-meteo.com', 'Open-Meteo')}. Built with ${link('https://leafletjs.com', 'Leaflet')}.</div>`;
-    $('#legend').innerHTML = parts.length || needCredits ? parts.join('') + (needCredits ? credits : '') : '';
+    const body = parts.join('') + (needCredits ? credits : '');
+    box.innerHTML = body ? `<button class="icon-btn lg-close" type="button" id="keyClose" aria-label="Shrink the map key">${icon('close')}</button>${body}` : '';
   };
 
   // ---------- Inspector ----------
@@ -1249,21 +1278,33 @@
     // darkness
     if (d.zone === undefined) rows.push(['bulb', 'Sky darkness', skel(110), '']);
     else if (d.zone === null) rows.push(['bulb', 'Sky darkness', 'Unknown', 'The atlas tile did not load']);
-    else { const z = Sky.LP[d.zone]; rows.push(['bulb', 'Sky darkness', `<span class="swatch" style="display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;background:${Sky.lpColor(d.zone)}"></span>Zone ${z.id} · <span class="mono">${z.sqm} mag/arcsec²</span>`, `≈ Bortle ${z.bortle}. ${Sky.SKY_WORDS[z.bortle]}`]); }
+    else { const z = Sky.LP[d.zone]; rows.push(['bulb', 'Sky darkness', `<span class="swatch" style="display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;background:${Sky.lpColor(d.zone)}"></span>Bortle ${z.bortle} · zone ${z.id}`, `${Sky.SKY_WORDS[z.bortle]} <span class="mono">${z.sqm}</span> mag/arcsec².`]); }
     // clouds
     if (w && w.cc != null) rows.push(['cloud', `Clouds ${when}`, `<span class="mono">${Math.round(w.cc)}%</span>`, `Low ${Math.round(w.low)}% · mid ${Math.round(w.mid)}% · high ${Math.round(w.high)}%`]);
     else if (grid) rows.push(['cloud', `Clouds ${when}`, `<span class="mono">${Math.round(grid.cc)}%</span>`, 'From the regional cloud map']);
     else rows.push(['cloud', `Clouds ${when}`, d.wxErr ? 'Unavailable' : skel(60), '']);
-    // aurora
+    // the two things the map colors show, as numbers for this spot (same formulas as the map)
     const v = Sky.ovInView(d.lat, d.lon);
-    rows.push(['aurora', 'Aurora', v ? `<span class="mono">${U.pct(v.inView)}</span> in view now` : skel(80), need > 9 ? 'Needs an extreme storm here' : `Needs about Kp ${need.toFixed(1)} · ${Math.abs(ml).toFixed(1)}° magnetic`]);
-    // best sky score here (same formula as the map)
     const siteV = D.siteAt(d.lat, d.lon) ?? (Number.isInteger(d.zone) ? Sky.SITE_STARS[d.zone] : null);
     const ccv = w && w.cc != null ? w.cc : grid ? grid.cc : null;
-    if (siteV != null && ccv != null) {
-      const mode = app().mode();
-      const bs = Sky.bestScore({ lat: d.lat, lon: d.lon, t: s.time, cc: ccv, site: siteV, kp: D.kpAt(s.time), mode });
-      rows.unshift(['sparkle', `Best sky ${when}`, `<span class="mono">${Math.round(bs * 100)}</span> / 100 · ${Sky.bestLabel(bs)}`, mode === 'stars' ? 'For stargazing: clear and dark' : 'For aurora: clear, dark and in reach']);
+    // A planned night is scored the way the map draws it: that night's Kp, and a clear sky where the
+    // cloud forecast does not reach yet
+    const pl = s.plan, guess = !!pl && pl.assume;
+    const kpT = pl ? pl.kp : D.kpAt(s.time);
+    const ccS = guess ? 0 : ccv;
+    const whenS = guess ? 'that night' : when;
+    const needTxt = need > 9 ? 'Needs an extreme storm here' : `Needs Kp ${need.toFixed(1)} here`;
+    const kpLine = `${needTxt}${kpT != null ? `; the forecast is ${kpT.toFixed(1)}` : ''}.`;
+    const nowcast = !pl && Math.abs(s.time - Date.now()) < 1.5 * U.HOUR && v ? ` NOAA now: ${U.pct(v.inView)} in view.` : '';
+    if (siteV != null && ccS != null) {
+      const sc = Sky.bestScores({ lat: d.lat, lon: d.lon, t: s.time, cc: ccS, site: siteV, kp: kpT, flat: !!pl });
+      const whyS = guess ? (sc.why === 'Clear and dark' ? 'Dark ground, if the sky is clear' : `${sc.why}, even under a clear sky`) : sc.why;
+      rows.unshift(
+        ['sparkle', `Stargazing ${whenS}`, `<i class="kd gold"></i><span class="mono">${Math.round(sc.stars * 100)}</span> / 100 · ${Sky.bestLabel(sc.stars)}`, `${whyS}.`],
+        ['aurora', `Aurora ${whenS}`, `<i class="kd ${sc.reach >= 0.3 ? 'green' : 'none'}"></i><span class="mono">${Math.round(sc.aurora * 100)}</span> / 100 · ${Sky.auroraLabel(sc.aurora)}`, `${sc.whyA ? `${sc.whyA}. ` : ''}${kpLine}${nowcast}`],
+      );
+    } else {
+      rows.push(['aurora', 'Aurora', v ? `<span class="mono">${U.pct(v.inView)}</span> in view now` : skel(80), kpLine]);
     }
     // terrain
     let hzHtml = '';
@@ -1283,13 +1324,13 @@
     box.innerHTML = `<div class="ins-head"><div style="min-width:0"><span class="eyebrow">${esc(d.kindLabel || (saved ? 'Our spot' : 'Dropped pin'))}</span><h3>${esc(title)}</h3>
         <button class="ins-coords" type="button" id="insCopy" title="Copy coordinates">${U.fmtCoord(d.lat, d.lon)}${icon('copy')}</button></div>
         <button class="icon-btn" type="button" id="insClose" aria-label="Close">${icon('close')}</button></div>
-      <div class="ins-rows">${rows.map(([ic, k, v2, sub]) => `<div class="ins-row">${icon(ic)}<div><div class="k">${esc(k)}</div><div class="v">${v2}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div></div>`).join('')}</div>
       <div class="ins-actions">
         ${saved ? `<button class="btn sm" type="button" disabled>${icon('check')}Saved</button>` : `<button class="btn primary sm" type="button" id="insSave">${icon('star')}Save spot</button>`}
         <button class="btn sm" type="button" id="insPlan">${icon('moon')}Plan tonight here</button>
         <a class="btn sm ghost" href="${UI.directionsUrl(d.lat.toFixed(5), d.lon.toFixed(5))}" target="_blank" rel="noopener">${icon('route')}Directions</a>
         ${atHome ? '' : `<button class="btn sm ghost" type="button" id="insHome">${icon('home')}Set as home</button>`}
-      </div>`;
+      </div>
+      <div class="ins-rows">${rows.map(([ic, k, v2, sub]) => `<div class="ins-row">${icon(ic)}<div><div class="k">${esc(k)}</div><div class="v">${v2}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div></div>`).join('')}</div>`;
     $('#insClose').onclick = () => app().closeInspector();
     $('#insPlan').onclick = () => app().selectPlace({ kind: d.kind || 'pin', lat: d.lat, lon: d.lon, name: title, id: saved ? saved.id : d.id });
     const sv = $('#insSave');

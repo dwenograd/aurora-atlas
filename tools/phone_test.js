@@ -108,6 +108,12 @@ const check = (name, ok, detail = '') => { results.push({ name, ok: !!ok, detail
     check('no sideways overflow', noOverflow);
     const chips = await page.evaluate(() => [...document.querySelectorAll('.chip span')].map((x) => getComputedStyle(x).display !== 'none' && x.getBoundingClientRect().width > 10));
     check('layer chips show their labels', chips.every(Boolean), JSON.stringify(chips));
+    // the one-line map key: always there, says which color is which, and stays out of the way
+    const key = await rect('#legend'), strip = await rect('#keyStrip');
+    const keyTxt = await page.evaluate(() => [...document.querySelectorAll('#keyStrip .kc')].map((c) => c.textContent));
+    check('map key strip sits on the map between the layer chips, the timeline and the map buttons', !!strip && key.y >= g.layers.b && key.b <= g.tl.y && key.x >= 0 && key.r <= g.ctl.x, JSON.stringify({ key, ctl: g.ctl }));
+    check('map key strip names stargazing and aurora', keyTxt.some((t) => /Stargazing/.test(t)) && keyTxt.some((t) => /Aurora/.test(t)), JSON.stringify(keyTxt));
+    check('map key strip leaves most of the map free', !!strip && g.tl.y - g.layers.b - key.h >= 110, `${g.tl.y - g.layers.b - (key ? key.h : 0)}px above the strip`);
   }
 
   if (phone && (SUITE === 'all' || SUITE === 'sheet')) {
@@ -189,8 +195,10 @@ const check = (name, ok, detail = '') => { results.push({ name, ok: !!ok, detail
     check('the dropped pin stays visible above the timeline', pin.y > lay.b && pin.y < tl.y, JSON.stringify(pin));
     const acts = await page.evaluate(() => { const a = document.querySelector('.ins-actions'), r = a.getBoundingClientRect(); return { y: Math.round(r.top), b: Math.round(r.bottom), n: a.children.length }; });
     check('place card actions are reachable without scrolling', acts.b <= H, JSON.stringify(acts));
-    // tap near the bottom edge of the visible map: the pin should be nudged into view
-    await tap(W / 2, tl.y - 14);
+    // tap near the bottom edge of the visible map (beside the key strip): the pin should be nudged into view
+    const edgeX = await page.evaluate((y) => { for (let x = innerWidth - 16; x > 16; x -= 6) { const e = document.elementFromPoint(x, y); if (e && e.closest('#map')) return x; } return null; }, tl.y - 14);
+    check('there is bare map to tap beside the key strip', edgeX != null, String(edgeX));
+    await tap(edgeX == null ? W / 2 : edgeX, tl.y - 14);
     await sleep(1200);
     const pin2 = await page.evaluate(() => { const d = AA.state.inspect; const p = AA.app.map.latLngToContainerPoint([d.lat, d.lon]); return { x: Math.round(p.x), y: Math.round(p.y) }; });
     check('a pin dropped at the map edge is nudged into view', pin2.y < tl.y - 20, JSON.stringify(pin2));
@@ -229,13 +237,23 @@ const check = (name, ok, detail = '') => { results.push({ name, ok: !!ok, detail
     await sleep(500);
     const lg = await rect('#legend'), layK = await rect('#layers'), tlK = await rect('#timeline');
     await shot('07-map-key');
-    const lgOk = await page.evaluate(() => { const l = document.querySelector('#legend'); return !l.classList.contains('off') && !!l.querySelector('.lg-credits') && getComputedStyle(l.querySelector('.lg-credits')).display !== 'none'; });
+    const lgOk = await page.evaluate(() => { const l = document.querySelector('#legend'); return !l.classList.contains('compact') && !!l.querySelector('.lg-credits') && getComputedStyle(l.querySelector('.lg-credits')).display !== 'none'; });
     check('map key opens with the map credits', lgOk, JSON.stringify(lg));
     check('map key fits between the layer chips and the timeline', lg.y >= layK.b && lg.b <= tlK.y, `key ${lg.y}-${lg.b}, chips end ${layK.b}, timeline starts ${tlK.y}`);
     check('sheet steps down to the tab bar while the key is open', (await sheet()).snap === 'peek');
     await tap(W - 40, layK.b + 24);
     await sleep(700);
-    check('tapping the map closes the map key (no stray pin) and the sheet comes back', await page.evaluate(() => document.querySelector('#legend').classList.contains('off') && !AA.state.inspect && AA.UI.sheet.snap === 'half'));
+    check('tapping the map shrinks the key to its strip (no stray pin) and the sheet comes back', await page.evaluate(() => document.querySelector('#legend').classList.contains('compact') && !!document.querySelector('#keyStrip') && !AA.state.inspect && AA.UI.sheet.snap === 'half'));
+    // the strip opens the key too, and the key's own close button shrinks it again
+    const ks = await rect('#keyStrip');
+    await tap(ks.x + ks.w / 2, ks.y + ks.h / 2);
+    await sleep(700);
+    const opened = await page.evaluate(() => !document.querySelector('#legend').classList.contains('compact') && !AA.state.inspect);
+    const kc = await rect('#keyClose');
+    await shot('07b-map-key-from-strip');
+    if (kc) await tap(kc.x + kc.w / 2, kc.y + kc.h / 2);
+    await sleep(700);
+    check('tapping the strip opens the key, and its close button shrinks it again', opened && !!kc && await page.evaluate(() => document.querySelector('#legend').classList.contains('compact') && !!document.querySelector('#keyStrip') && AA.UI.sheet.snap === 'half'), JSON.stringify({ opened, kc }));
     // ---------- layer chips ----------
     const chip = await rect('.chip[data-layer="clouds"]');
     await tap(chip.x + chip.w / 2, chip.y + chip.h / 2);
@@ -315,6 +333,20 @@ const check = (name, ok, detail = '') => { results.push({ name, ok: !!ok, detail
     check('layer buttons inside the screen', r.rc.y >= r.top.b && r.rc.b <= r.tl.y + 2 && r.rc.r <= W, JSON.stringify(r.rc));
     const noOverflow = await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth);
     check('no sideways overflow', noOverflow);
+    // the map key: strip or full, it is on the map and clear of the panel and the timeline; the key button swaps them
+    const onMap = (k) => !!k && k.w > 0 && k.x >= r.panel.r && k.r <= W && k.y >= r.top.b && k.b <= r.tl.y;
+    const key1 = await rect('#legend');
+    const full1 = await page.evaluate(() => !document.querySelector('#legend').classList.contains('compact'));
+    await page.evaluate(() => document.querySelector('#legendBtn').click());
+    await sleep(300);
+    const key2 = await rect('#legend');
+    const full2 = await page.evaluate(() => !document.querySelector('#legend').classList.contains('compact'));
+    await shot(full2 ? '02b-key-full' : '02b-key-strip');
+    check('map key is on the map as a strip or in full, and the key button swaps them', onMap(key1) && onMap(key2) && full1 !== full2, JSON.stringify({ full1, key1, full2, key2 }));
+    const names = await page.evaluate(() => document.querySelector('#legend').textContent);
+    check('map key names stargazing and aurora', /Stargazing/.test(names) && /Aurora/.test(names), names.slice(0, 80));
+    await page.evaluate(() => document.querySelector('#legendBtn').click());
+    await sleep(300);
     const mx = r.panel.r + 70, my = Math.round((r.top.b + r.tl.y) / 2); // clear of the legend and the layer buttons
     await tap(mx, my);
     await sleep(1800);

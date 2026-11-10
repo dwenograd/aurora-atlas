@@ -11,11 +11,13 @@ Chrome open the menu, then Install app.
 
 ## What it shows
 
-- **Best sky** (the gold and green map): for every spot around home, clear sky at the chosen hour ×
-  how dark the sky is there × how far south the forecast Kp reaches × darkness and moonlight.
-  Gold is the best ground for the night. Scrub or play the timeline to watch it change.
-- **Aurora**: NOAA's 30-minute OVATION forecast drawn as moving curtains, plus a gold dotted line
-  showing how far south the aurora may be seen at the timeline's Kp.
+- **Best sky** (the gold and green map), two colors with two meanings. **Gold is stargazing**: clear
+  sky at the chosen hour × how dark the sky is there × darkness and moonlight. **Green is aurora
+  viewing**: the same clear, dark sky, wherever the forecast Kp reaches far enough south. Auto shows
+  both at once, and a small key on the map always says which is which. Scrub or play the timeline to
+  watch it change.
+- **Aurora**: NOAA's 30-minute OVATION forecast drawn as moving curtains (aurora overhead), plus a
+  green dotted line showing how far south the aurora is likely to be seen at the timeline's Kp.
 - **Clouds** and **Light pollution** as their own layers (off by default; Best sky already blends them).
 - **Tonight**: a verdict for home or any spot, dark hours, moon, clouds, Kp you need, sky darkness
   (Bortle), temperature and dew, hour by hour.
@@ -30,8 +32,9 @@ Chrome open the menu, then Install app.
 ## On a phone
 
 The map takes the top of the screen and the planner is a sheet at the bottom. Drag or flick the sheet's
-handle between three stops: just the tab bar, half, and full. Tap the map for a place card, tap ⓘ for the
-map key, and tap the live strip at the top for space weather. A phone on its side gets a side-panel layout.
+handle between three stops: just the tab bar, half, and full. Tap the map for a place card, tap the
+color key (or ⓘ) for the full map key, and tap the live strip at the top for space weather. A phone on
+its side gets a side-panel layout.
 
 ## Sharing between devices
 

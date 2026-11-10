@@ -66,7 +66,7 @@
   let pickMarker = null, radiusRing = null;
   let fxDirty = true, mapMoving = false;
   map.on('movestart zoomstart', () => { mapMoving = true; });
-  map.on('moveend zoomend', () => { mapMoving = false; fxDirty = true; placeReachTip(); maybeOfferClouds(); });
+  map.on('moveend zoomend', () => { mapMoving = false; fxDirty = true; placeReachTip(); maybeOfferClouds(); refreshKey(); });
   labels.bringToFront();
 
   // Where the map is hidden behind panels, so fly-tos land in the clear part
@@ -159,15 +159,16 @@
   }
 
   // ---------- Aurora reach line (magnetic latitude for the timeline's Kp) ----------
-  let reach = null, reachGlow = null, reachTip = null, reachKp = null, reachPts = null;
+  let reach = null, reachGlow = null, reachTip = null, reachKp = null, reachPts = null, reachShown = null;
   function clearReach() {
     if (reach) { reach.remove(); reachGlow.remove(); reach = reachGlow = null; }
     if (reachTip) { map.closeTooltip(reachTip); reachTip = null; }
     reachKp = null;
   }
   function drawReach() {
-    const kp = D.kpAt(state.time);
+    const kp = state.plan ? state.plan.kp : D.kpAt(state.time); // a planned night draws its own Kp
     if (!state.settings.layers.aurora || kp == null) { clearReach(); return; }
+    reachShown = kp;
     const k = Math.round(kp * 3) / 3;
     if (k !== reachKp || !reach) {
       reachKp = k;
@@ -186,7 +187,7 @@
     let best = reachPts[0];
     for (const p of reachPts) if (Math.abs(p[1] - cl) < Math.abs(best[1] - cl)) best = p;
     const ll = L.latLng(best[0], best[1] + (c.lng - cl));
-    const html = `Aurora reach at Kp ${reachKp.toFixed(1)}`;
+    const html = `Aurora likely north of this line · Kp ${(reachShown ?? reachKp).toFixed(1)}`;
     if (!map.getBounds().pad(-0.12).contains(ll)) { if (reachTip) { map.closeTooltip(reachTip); reachTip = null; } return; }
     if (!reachTip) {
       reachTip = L.tooltip({ permanent: true, direction: 'top', className: 'reach-tip', offset: [0, -6], interactive: false }).setLatLng(ll).setContent(html);
@@ -584,7 +585,7 @@
     state.plan = { ...n, mid: (n.from + n.to) / 2, assume: !inRange, areas: [] };
     state.plan.areas = planAreas(n);
     if (!state.settings.layers.best) { state.settings.layers.best = true; save('settings'); applyLayers(); }
-    if (inRange) app.setTime(U.floorHour(n.from) + 1.5 * U.HOUR, { live: false, plan: true }); else updateBest();
+    if (inRange) app.setTime(U.floorHour(n.from) + 1.5 * U.HOUR, { live: false, plan: true }); else { updateBest(); drawReach(); refreshKey(); }
     drawPlan();
     if (isMobile() && state.inspect) app.closeInspector();
     UI.setTab('tonight');
@@ -621,7 +622,7 @@
   app.conditionsSnapshot = () => {
     const p = app.place(), kp = D.kpNow(), s = D.swNow(), mi = Sky.moonIllum(Date.now());
     let cc = null;
-    if (p) { const it = app.placeInfo(p); const w = it.wx ? D.wxAt(it.wx, Date.now()) : null; cc = w ? w.cc : null; }
+    if (p) { const it = app.placeInfo(p); const w = it.wx ? D.wxAt(it.wx, U.floorHour(Date.now())) : null; cc = w ? w.cc : null; }
     const cond = { kp, bz: s.bz, v: s.v, cc, moon: mi.fraction };
     const text = [kp != null ? `Kp ${kp.toFixed(1)}` : null, s.bz != null ? `Bz ${s.bz.toFixed(1)}` : null, cc != null ? `${Math.round(cc)}% cloud` : null, `Moon ${Math.round(mi.fraction * 100)}%`].filter(Boolean).join(', ');
     return { cond, text };
@@ -639,6 +640,7 @@
     updateBest();
     UI.drawTimeline();
     drawReach();
+    refreshKey();
     const h = U.floorHour(t);
     if (state.inspect && h !== lastInspectHour) { lastInspectHour = h; UI.renderInspector(state.inspect); }
   };
@@ -655,7 +657,8 @@
     const sun = Sky.sunAlt(t, c.lat, c.lon), mp = Sky.moonPos(t, c.lat, c.lon), mi = Sky.moonIllum(t);
     fx.setBestParams({
       kp: pl ? (pl.kp ?? 0) : (D.kpAt(t) ?? 0),
-      mode: pl ? (pl.lvl && pl.lvl.s >= 0.45 ? 0 : 1) : app.mode() === 'stars' ? 1 : 0,
+      // which color families show: [gold stargazing, green aurora]. Auto (and a planned night) shows both.
+      modeW: pl || state.settings.mode === 'auto' ? [1, 1] : state.settings.mode === 'stars' ? [1, 0] : [0, 1],
       assume: pl && pl.assume ? 1 : 0,
       // when planning a night the map answers "where": moonlight is the same everywhere, so the card covers it
       dark: pl ? [1, 1, 1, 1] : [Sky.darkFactor(sun, 'aurora'), Sky.darkFactor(sun, 'stars'), Sky.moonFactor(mp.alt, mi.fraction, 'aurora'), Sky.moonFactor(mp.alt, mi.fraction, 'stars')],
@@ -714,10 +717,33 @@
     U.$$('.chip[data-layer]').forEach((b) => b.setAttribute('aria-pressed', String(!!ly[b.dataset.layer])));
   }
 
-  // On big screens the legend sits open beside the layer buttons. On phones and short screens it is a
-  // pop-up map key (with the map credits) that starts closed and closes on the next tap of the map.
-  let keyOpen = false, keyPrevSnap = null;
+  // The map key is always on the map: as a one-line strip, or opened up with the scales. It starts as the
+  // strip. On phones and short screens the open key is a pop-up that a tap on the map shrinks again.
+  let keyOpen = false, keyPrevSnap = null, keySig = '';
   const compactKey = () => isMobile() || shortMq.matches;
+  app.keyFull = () => legendShown();
+  // What the key needs to know right now: is the aurora in reach anywhere on the forecast map, and is
+  // NOAA's oval on screen?
+  app.keyInfo = () => {
+    const pl = state.plan, kp = pl ? pl.kp : D.kpAt(state.time), h = state.home;
+    const box = D.grid || (h ? { south: h.lat - 2.2, north: h.lat + 2.2, west: h.lon - 3.2, east: h.lon + 3.2 } : null);
+    let best = 0;
+    if (box && kp != null) for (const la of [box.south, box.north]) for (const lo of [box.west, box.east]) best = Math.max(best, Sky.reachFactor(kp, Sky.magLat(la, lo)));
+    let oval = false;
+    if (D.ov && state.settings.layers.aurora && Math.abs(state.time - D.ov.fc) <= 2 * U.HOUR) {
+      const b = map.getBounds();
+      for (let i = 0; i <= 4 && !oval; i++) for (let j = 0; j <= 4 && !oval; j++) {
+        oval = (Sky.ovAt(U.lerp(b.getSouth(), b.getNorth(), i / 4), U.lerp(b.getWest(), b.getEast(), j / 4)) || 0) >= 3;
+      }
+    }
+    return { kp, need: h ? Sky.kpNeeded(Sky.magLat(h.lat, h.lon)) : null, inReach: best >= 0.3, oval, planned: !!pl };
+  };
+  // Redraw the key only when what it says would change
+  function refreshKey() {
+    const i = app.keyInfo();
+    const sig = `${i.inReach}|${i.kp == null ? '' : i.kp.toFixed(1)}|${i.oval}|${i.planned}`;
+    if (sig !== keySig) { keySig = sig; UI.renderLegend(); }
+  }
   // The key covers part of a small map, so on a phone the sheet steps down to its tab bar while it is open
   function setKey(open) {
     keyOpen = open;
@@ -728,12 +754,19 @@
     UI.renderLegend();
     applyLegend();
   }
-  const legendShown = () => (compactKey() ? keyOpen : typeof state.settings.legend === 'boolean' ? state.settings.legend : window.innerHeight > 760);
+  const legendShown = () => (compactKey() ? keyOpen : state.settings.legend === true);
   function applyLegend() {
-    const show = legendShown();
-    $('#legend').classList.toggle('off', !show);
-    $('#legendBtn').setAttribute('aria-pressed', String(show));
-    $('#legendBtn').setAttribute('aria-label', show ? 'Hide the map key' : 'Show the map key and credits');
+    const full = legendShown();
+    $('#legend').classList.toggle('compact', !full);
+    $('#legendBtn').setAttribute('aria-pressed', String(full));
+    $('#legendBtn').setAttribute('aria-label', full ? 'Shrink the map key' : 'Open the map key and credits');
+  }
+  function toggleKey(open) {
+    if (compactKey()) { setKey(open == null ? !keyOpen : open); return; }
+    state.settings.legend = open == null ? !legendShown() : open;
+    save('settings');
+    UI.renderLegend();
+    applyLegend();
   }
 
   // ---------- Cloud grid coverage ----------
@@ -802,11 +835,11 @@
     UI.renderSpots();
     UI.renderSpace();
   }
-  // Phones start with the map key closed, so say once what the colors mean
+  // Say once what the two map colors mean (also for people who knew the earlier green-to-gold map)
   function hintOnce() {
-    if (!isMobile() || !state.home || U.store.get('aa.hintKey', 0)) return;
-    U.store.set('aa.hintKey', 1);
-    setTimeout(() => UI.toast('Gold on the map is clear, dark sky. The ⓘ button has the full key.', { timeout: 8000 }), 3200);
+    if (!state.home || U.store.get('aa.hintColors', 0)) return;
+    U.store.set('aa.hintColors', 1);
+    setTimeout(() => UI.toast('Map colors: gold is good stargazing sky, green is where the aurora should show too.', { timeout: 9000 }), 3200);
   }
   const fineTune = coarse ? 'To fine-tune it, tap the exact spot and choose Set as home.' : 'Drag the home pin to fine-tune it.';
   function bindWelcome() {
@@ -978,7 +1011,7 @@
       <p><b>Kp you need.</b> NOAA's space weather scales say how far from the poles aurora reaches at each Kp: about 60° magnetic latitude at Kp 5, 55° at Kp 6, 50° at Kp 7, 45° at Kp 8 and 40° at Kp 9. Your magnetic latitude sets the Kp you need.</p>
       <p><b>Aurora right now.</b> NOAA's OVATION model gives the chance of aurora overhead on a 1° grid, about 30 minutes ahead. "In view" also counts aurora up to about 1,300 km away that would stand at least 3° above your horizon, taking the glow to be about 150 km up.</p>
       <p><b>Scores.</b> Each hour multiplies the aurora chance (stars skip this), clear sky, darkness, moonlight, and how much light pollution costs at that place. Thin high cloud counts 40% less than low cloud.</p>
-      <p><b>Best sky.</b> The gold and green map multiplies, for every spot on the map: clear sky at the timeline's hour, how dark the sky is there (light pollution atlas), how far south the forecast Kp reaches (aurora mode), and darkness and moonlight. Gold is the best ground. Auto mode plans for the aurora when the forecast Kp gets within one step of what your home needs, and for stars otherwise.</p>
+      <p><b>Best sky.</b> Gold on the map is good stargazing: clear sky at the timeline's hour × how dark the sky is there (light pollution atlas) × darkness and moonlight. Green is where the aurora should be in view as well: the same clear, dark sky, as far south as the forecast Kp reaches. Auto shows both, Aurora or Stars shows just one. The moving green and violet curtains are NOAA's forecast of aurora overhead, and the dotted green line is how far south it is likely to be seen. In the Forecast tab, Auto leads with the aurora when the forecast Kp gets within one step of what your home needs, and with stars otherwise.</p>
       <p><b>Spots.</b> The finder ranks the darkest, clearest ground within your radius, then picks the nearest real place to stand there from OpenStreetMap. Each one is checked for an open view toward the aurora (terrain only, from a 90 m elevation model), distance and tonight's clouds.</p>
       <h4>Data sources</h4>
       <ul>
@@ -1127,6 +1160,7 @@
     UI.renderLive();
     UI.renderTonight();
     if (state.inspect) UI.renderInspector(state.inspect);
+    refreshKey();
     checkAuroraAlert();
   });
   AA.on('kp', () => { app.recomputeNights(); UI.renderLive(); UI.renderTonight(); UI.rebuildTimeline(); UI.renderSpace(); UI.renderLegend(); drawReach(); updateBest(); checkAuroraAlert(); });
@@ -1218,13 +1252,11 @@
       app.selectPlace(null);
       app.flyTo(state.home.lat, state.home.lon, Math.max(7.5, map.getZoom()));
     };
-    $('#legendBtn').onclick = () => {
-      if (compactKey()) { setKey(!keyOpen); return; }
-      state.settings.legend = !legendShown();
-      save('settings');
-      UI.renderLegend();
-      applyLegend();
-    };
+    $('#legendBtn').onclick = () => toggleKey();
+    $('#legend').addEventListener('click', (e) => {
+      if (e.target.closest('#keyStrip')) toggleKey(true);
+      else if (e.target.closest('#keyClose')) toggleKey(false);
+    });
     $('#searchBtn').onclick = () => app.openSearch();
     $('#settingsBtn').onclick = () => app.openSettings();
     $('#alertBtn').onclick = () => setAlerts(!state.settings.alerts);

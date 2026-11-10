@@ -235,17 +235,35 @@
     return { kp, lvl, s };
   };
 
-  // Best sky: the blended map score, same formula as the map shader.
-  // Clear sky x dark sky x (for aurora) how far south the forecast Kp reaches x night darkness and moonlight.
+  // Best sky: the two map scores, same formulas as the map shader.
+  //   Stargazing (gold):     clear sky x dark sky x night darkness and moonlight
+  //   Aurora viewing (green): the same, gentler on city lights and moon, x how far south the forecast Kp reaches
   Sky.reachFactor = (kp, magLat) => (kp == null ? 0.03 : 0.03 + 0.97 * U.smooth(-1.5, 1.0, kp - Sky.kpNeeded(magLat)));
-  Sky.bestScore = ({ lat, lon, t, cc, site, kp, mode }) => {
+  Sky.bestLabel = (s) => (s >= 0.7 ? 'Golden' : s >= 0.5 ? 'Good' : s >= 0.3 ? 'Fair' : 'Poor');
+  // lines up with Sky.kpLevel under a clear, dark sky
+  Sky.auroraLabel = (s) => (s >= 0.88 ? 'Strong' : s >= 0.6 ? 'Likely' : s >= 0.25 ? 'Possible' : s >= 0.08 ? 'Long shot' : 'Unlikely');
+  // Both scores for one spot, each with what holds it back.
+  // flat: a planned night. The map then leaves out the hour and the moon (the same everywhere), so this does too.
+  Sky.bestScores = ({ lat, lon, t, cc, site, kp, flat = false }) => {
     const clar = cc == null ? 0.5 : U.clamp(1 - cc / 100, 0, 1);
     const s = site == null ? 0.55 : site;
-    const sun = Sky.sunAlt(t, lat, lon), mp = Sky.moonPos(t, lat, lon), mi = Sky.moonIllum(t);
-    if (mode === 'stars') return clar * Sky.darkFactor(sun, 'stars') * Sky.moonFactor(mp.alt, mi.fraction, 'stars') * s;
-    return Sky.reachFactor(kp, Sky.magLat(lat, lon)) * clar * Sky.darkFactor(sun, 'aurora') * Sky.moonFactor(mp.alt, mi.fraction, 'aurora') * (1 - 0.45 * (1 - s));
+    const sun = flat ? -30 : Sky.sunAlt(t, lat, lon), mp = Sky.moonPos(t, lat, lon), mi = Sky.moonIllum(t);
+    const dS = Sky.darkFactor(sun, 'stars'), mS = flat ? 1 : Sky.moonFactor(mp.alt, mi.fraction, 'stars');
+    const dA = Sky.darkFactor(sun, 'aurora'), mA = flat ? 1 : Sky.moonFactor(mp.alt, mi.fraction, 'aurora');
+    const reach = Sky.reachFactor(kp, Sky.magLat(lat, lon));
+    // stargazing: name the weakest of darkness, cloud, city lights and moon
+    const low = Math.min(dS, clar, s, mS);
+    let why = 'Clear and dark';
+    if (low < 0.75) {
+      if (low === dS) why = sun > -6 ? 'Daylight at that hour' : 'Twilight at that hour';
+      else if (low === clar) why = clar < 0.4 ? 'Mostly cloudy' : 'Some cloud';
+      else if (low === s) why = s < 0.3 ? 'City lights wash out the stars' : 'Town lights brighten the sky';
+      else why = 'Bright moon';
+    }
+    // aurora: besides the Kp, only daylight or cloud can spoil it
+    const whyA = dA < 0.3 ? (sun > -3 ? 'Daylight at that hour' : 'Twilight at that hour') : clar < 0.5 ? 'Cloud in the way' : null;
+    return { reach, why, whyA, stars: clar * dS * mS * s, aurora: reach * clar * dA * mA * (1 - 0.45 * (1 - s)) };
   };
-  Sky.bestLabel = (s) => (s >= 0.7 ? 'Golden' : s >= 0.5 ? 'Good' : s >= 0.3 ? 'Fair' : 'Poor');
 
   // Hour-by-hour conditions for a place
   Sky.series = ({ lat, lon, wx, zone, from, to, view }) => {

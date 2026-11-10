@@ -15,8 +15,9 @@
   const VERT = 'attribute vec2 p; void main() { gl_Position = vec4(p, 0.0, 1.0); }';
 
   // Map overlay, painted bottom to top:
-  //  1. Best sky: clear sky x dark sky x aurora reach x night darkness, from a dark veil through teal
-  //     and green to gold, with sparkles on the golden ground.
+  //  1. Best sky, in two color families over a dark veil: gold for stargazing (clear sky x dark sky x
+  //     night darkness) and green for aurora viewing (the same, x how far south the forecast Kp reaches),
+  //     with sparkles on the best ground.
   //  2. Clouds: forecast cloud cover as drifting fog, with stars twinkling wherever it's clear.
   //  3. Aurora: NOAA's OVATION probability as moving curtains.
   const FRAG_MAP = `
@@ -28,7 +29,7 @@
     uniform vec2 uRes; uniform vec4 uView; uniform float uPpd; uniform vec2 uAnchor; uniform float uDpr; uniform float uTime;
     uniform sampler2D uOv; uniform float uAurora;
     uniform sampler2D uCloud; uniform vec4 uCBox; uniform vec2 uCN; uniform float uCMix; uniform float uClouds;
-    uniform sampler2D uSite; uniform vec2 uSN; uniform float uBest; uniform float uBMode; uniform float uKp; uniform vec4 uDark; uniform vec2 uPole; uniform float uAssume;
+    uniform sampler2D uSite; uniform vec2 uSN; uniform float uBest; uniform vec2 uModeW; uniform float uKp; uniform vec4 uDark; uniform vec2 uPole; uniform float uAssume;
     ${NOISE}
     // Smooth cubic B-spline sampling of the coarse cloud grid (4 bilinear taps), so it has no grid kinks
     vec4 cloudAt(vec2 cuv) {
@@ -70,13 +71,29 @@
             float sml = sin(rl) * sin(uPole.x) + cos(rl) * cos(uPole.x) * cos(radians(lon) - uPole.y);
             float ml = degrees(asin(clamp(sml, -1.0, 1.0)));
             float need = (85.0 - abs(ml)) / 5.0;
-            float aur = 0.03 + 0.97 * smoothstep(-1.5, 1.0, uKp - need);
-            float s = uBMode < 0.5 ? aur * clar * uDark.x * uDark.z * (1.0 - 0.45 * (1.0 - site)) : clar * uDark.y * uDark.w * site;
+            float reach = 0.03 + 0.97 * smoothstep(-1.5, 1.0, uKp - need);
+            // Two color families, so the map never mixes them up. Gold is stargazing: clear, dark sky.
+            // Green is aurora viewing: the same clear, dark sky where the forecast Kp reaches that far.
+            // uModeW = (show stargazing, show aurora); with both on, green takes over where the aurora reaches.
+            float sS = clar * uDark.y * uDark.w * site;
+            float sA = reach * clar * uDark.x * uDark.z * (1.0 - 0.45 * (1.0 - site));
+            float w = uModeW.y * mix(1.0, smoothstep(0.25, 0.36, reach), uModeW.x);
+            // With both on, how bright the ground is says how good the sky is, and its color says what for:
+            // ground the aurora reaches is never drawn dimmer than its stargazing alone would be.
+            float s = mix(sS, max(sS * uModeW.x, sA), w);
             float k = uBest * edge;
             float veil = (1.0 - smoothstep(0.1, 0.38, s)) * 0.5 * k;
-            vec3 bc = mix(vec3(0.10, 0.50, 0.58), vec3(0.36, 0.92, 0.6), smoothstep(0.3, 0.56, s));
-            bc = mix(bc, vec3(1.0, 0.87, 0.5), smoothstep(0.56, 0.8, s));
-            float ba = smoothstep(0.2, 0.6, s) * mix(0.55, 0.82, smoothstep(0.56, 0.85, s)) * k;
+            vec3 gold = mix(vec3(0.70, 0.45, 0.15), vec3(1.0, 0.78, 0.34), smoothstep(0.28, 0.58, sS));
+            gold = mix(gold, vec3(1.0, 0.90, 0.60), smoothstep(0.58, 0.85, sS));
+            float aS = smoothstep(0.2, 0.6, sS) * mix(0.5, 0.82, smoothstep(0.56, 0.85, sS));
+            // the green deepens with the aurora's strength: teal (possible), green (likely), mint (strong)
+            vec3 grn = mix(vec3(0.10, 0.60, 0.62), vec3(0.24, 0.94, 0.64), smoothstep(0.16, 0.46, sA));
+            grn = mix(grn, vec3(0.74, 1.0, 0.88), smoothstep(0.52, 0.85, sA));
+            float aA = smoothstep(0.1, 0.48, sA) * mix(0.5, 0.84, smoothstep(0.5, 0.85, sA));
+            // slow, tall streaks, like curtain rays, set the aurora ground apart from the steady gold
+            float shim = fbm(vec2(g.x / 34.0 + uTime * 0.07, g.y / 260.0 - uTime * 0.02));
+            vec3 bc = mix(gold, grn, w);
+            float ba = mix(aS, max(aS * uModeW.x, aA), w) * mix(1.0, 0.78 + 0.42 * shim, w) * k;
             col = vec3(0.012, 0.02, 0.04) * veil; alpha = veil;
             col = bc * ba + col * (1.0 - ba); alpha = ba + alpha * (1.0 - ba);
             if (s > 0.6) {
@@ -88,7 +105,7 @@
                 float d = length((f - pos) * 9.0);
                 float tw = 0.5 + 0.5 * sin(uTime * (1.3 + 2.0 * hash(cell + 4.4)) + h * 50.0);
                 float spk = smoothstep(1.7, 0.0, d) * tw * smoothstep(0.6, 0.9, s) * k;
-                col += vec3(1.0, 0.92, 0.66) * spk; alpha = max(alpha, spk);
+                col += mix(vec3(1.0, 0.92, 0.66), vec3(0.8, 1.0, 0.9), w) * spk; alpha = max(alpha, spk);
               }
             }
           }
@@ -182,9 +199,9 @@
     const st = {
       aurora: 0, auroraTarget: 1, clouds: 0, cloudsTarget: 1, best: 0, bestTarget: 1,
       hasOv: false, grid: null, h0: -1, cmix: 0, anchor: null, anchorZoom: null, lost: false, ovData: null,
-      site: null, bp: { kp: 0, mode: 1, dark: [0, 0, 1, 1] },
+      site: null, bp: { kp: 0, modeW: [1, 0], dark: [0, 0, 1, 1] },
     };
-    const UNIFORMS = ['uRes', 'uView', 'uPpd', 'uAnchor', 'uDpr', 'uTime', 'uOv', 'uAurora', 'uCloud', 'uCBox', 'uCN', 'uCMix', 'uClouds', 'uSite', 'uSN', 'uBest', 'uBMode', 'uKp', 'uDark', 'uPole', 'uAssume'];
+    const UNIFORMS = ['uRes', 'uView', 'uPpd', 'uAnchor', 'uDpr', 'uTime', 'uOv', 'uAurora', 'uCloud', 'uCBox', 'uCN', 'uCMix', 'uClouds', 'uSite', 'uSN', 'uBest', 'uModeW', 'uKp', 'uDark', 'uPole', 'uAssume'];
     const mkTex = () => {
       const t = gl.createTexture();
       gl.bindTexture(gl.TEXTURE_2D, t);
@@ -302,7 +319,7 @@
       if (g) { gl.uniform4f(u.uCBox, g.west, g.south, g.east, g.north); gl.uniform2f(u.uCN, g.nx, g.ny); gl.uniform1f(u.uCMix, st.cmix); }
       if (st.site) gl.uniform2f(u.uSN, st.site.W, st.site.H);
       const bp = st.bp;
-      gl.uniform1f(u.uBMode, bp.mode);
+      gl.uniform2f(u.uModeW, bp.modeW[0], bp.modeW[1]);
       gl.uniform1f(u.uKp, bp.kp);
       gl.uniform4f(u.uDark, bp.dark[0], bp.dark[1], bp.dark[2], bp.dark[3]);
       gl.uniform2f(u.uPole, U.rad(AA.Sky.POLE.lat), U.rad(AA.Sky.POLE.lon));
