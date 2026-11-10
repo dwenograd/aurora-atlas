@@ -71,8 +71,18 @@
     return hit;
   };
   D.kpNow = () => {
-    const k = D.kp1m[D.kp1m.length - 1];
-    if (k && Date.now() - k.t < 3 * U.HOUR) return k.kp;
+    const n = D.kp1m.length, k = D.kp1m[n - 1];
+    if (k && Date.now() - k.t < 3 * U.HOUR) {
+      // NOAA's running estimate restarts from zero at each 3-hour mark (00, 03, ... UTC) and builds back up,
+      // so early in a window the last reading of the window before is the better "now"
+      const w0 = Math.floor(k.t / (3 * U.HOUR)) * 3 * U.HOUR;
+      if (k.t - w0 < 45 * U.MIN) {
+        for (let i = n - 1; i >= 0; i--) {
+          if (D.kp1m[i].t < w0) { if (D.kp1m[i].kp > k.kp) return D.kp1m[i].kp; break; }
+        }
+      }
+      return k.kp;
+    }
     const b = D.kpBlock(Date.now());
     return b ? b.kp : null;
   };

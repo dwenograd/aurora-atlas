@@ -5,7 +5,10 @@
   const $ = U.$;
   const SITE_URL = 'https://dwenograd.github.io/aurora-atlas/';
   const app = (AA.app = {});
-  const isMobile = () => window.matchMedia('(max-width: 760px)').matches;
+  const isMobile = () => UI.sheet.enabled; // phone layout: the planner is a bottom sheet
+  const coarse = window.matchMedia('(pointer: coarse)').matches; // finger, not mouse
+  const shortMq = window.matchMedia('(max-height: 540px) and (min-width: 560px)'); // a phone on its side
+  const scrollWithin = (box, el, pad = 8) => { if (box && el) box.scrollTop = Math.max(0, el.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop - pad); };
 
   // ---------- State ----------
   const lang = navigator.language || 'en-US';
@@ -54,7 +57,7 @@
     attribution: 'Light pollution &copy; <a href="https://djlorenz.github.io/astronomy/lp/" target="_blank" rel="noopener">D. Lorenz</a> · Aurora &amp; Kp: <a href="https://www.swpc.noaa.gov" target="_blank" rel="noopener">NOAA SWPC</a> · Weather: <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a>',
   });
   const fx = FX.createMapLayer(map);
-  const particles = FX.createParticles(map);
+  const particles = FX.createParticles(map, { max: coarse ? 130 : 240, dpr: coarse ? 1.5 : 2 });
   const sw = FX.createSolarWind($('#swCanvas'));
   const linesRenderer = L.svg({ pane: 'linesPane', padding: 0.5 });
   const homeLayer = L.layerGroup().addTo(map);
@@ -69,11 +72,14 @@
   // Where the map is hidden behind panels, so fly-tos land in the clear part
   function obstruction() {
     if (isMobile()) {
-      const sheet = $('#panel').getBoundingClientRect();
-      return { l: 0, r: 0, t: 120, b: window.innerHeight - sheet.top + 96 };
+      // the sheet (counted at half height at most: a full sheet hides the map anyway) plus the timeline riding on it
+      const sh = UI.sheet, eff = Math.min(sh.target || sh.heights.half, sh.heights.half);
+      return { l: 0, r: 0, t: $('#layers').getBoundingClientRect().bottom + 4, b: eff + ($('#timeline').offsetHeight || 64) + 14 };
     }
     const panel = $('#panel').getBoundingClientRect(), rc = $('.rightcol').getBoundingClientRect();
-    return { l: panel.right, r: window.innerWidth - rc.left, t: $('.topbar').getBoundingClientRect().bottom, b: window.innerHeight - $('#timeline').getBoundingClientRect().top };
+    const tlTop = window.innerHeight - $('#timeline').getBoundingClientRect().top;
+    if (shortMq.matches) return { l: panel.right, r: 8, t: rc.bottom, b: tlTop };
+    return { l: panel.right, r: window.innerWidth - rc.left, t: $('.topbar').getBoundingClientRect().bottom, b: tlTop };
   }
   app.flyTo = (lat, lon, zoom, opts = {}) => {
     const z = zoom ?? map.getZoom();
@@ -85,6 +91,20 @@
     const o = obstruction();
     map.flyToBounds(bounds, { paddingTopLeft: [o.l + 30, o.t + 30], paddingBottomRight: [o.r + 30, o.b + 30], duration: 1.4, maxZoom: 11 });
   };
+  // Put a point in the middle of the part of the map that is actually visible, without animating
+  app.centerOn = (lat, lon, zoom) => {
+    const z = zoom ?? map.getZoom();
+    const o = obstruction();
+    const p = map.project([lat, lon], z).subtract([(o.l - o.r) / 2, (o.t - o.b) / 2]);
+    map.setView(map.unproject(p, z), z, { animate: false });
+  };
+  // Nudge the map so a point is not hidden under the panels
+  function revealOnMap(lat, lon) {
+    const o = obstruction(), size = map.getSize(), pt = map.latLngToContainerPoint([lat, lon]), m = 28;
+    const dx = pt.x < o.l + m ? pt.x - (o.l + m) : pt.x > size.x - o.r - m ? pt.x - (size.x - o.r - m) : 0;
+    const dy = pt.y < o.t + m ? pt.y - (o.t + m) : pt.y > size.y - o.b - m ? pt.y - (size.y - o.b - m) : 0;
+    if (dx || dy) map.panBy([dx, dy], { duration: 0.35 });
+  }
 
   // ---------- Markers ----------
   const divIcon = (html, size) => L.divIcon({ className: '', html, iconSize: [size, size], iconAnchor: [size / 2, size / 2] });
@@ -93,7 +113,8 @@
     if (!state.home) return;
     const m = L.marker([state.home.lat, state.home.lon], {
       icon: divIcon(`<div class="mk mk-home"><i class="ring"></i><i class="ring r2"></i><div class="core">${U.icon('home')}</div></div>`, 34),
-      draggable: true, title: `${state.home.name} (drag to adjust)`, zIndexOffset: 1000, keyboard: true,
+      // on a touch screen a stray drag while panning would move home, so the pin only drags with a mouse
+      draggable: !coarse, title: coarse ? state.home.name : `${state.home.name} (drag to adjust)`, zIndexOffset: 1000, keyboard: true,
     });
     m.on('click', () => {
       app.selectPlace(null);
@@ -222,16 +243,23 @@
 
   app.selectPlace = (p) => {
     state.selected = p && p.kind !== 'home' ? p : null;
+    if (isMobile()) {
+      // the place card and the forecast share the sheet: show the forecast for this place
+      if (state.inspect) app.closeInspector({ keepPin: !!state.selected });
+      UI.sheet.snapTo('half');
+      $('#tab-tonight').scrollTop = 0;
+    }
     UI.setTab('tonight');
     UI.rebuildTimeline();
     UI.renderSpots();
-    if (isMobile()) $('#panel').classList.remove('expanded');
   };
   app.focusSpot = (p, { fly = true } = {}) => {
     state.selected = p;
+    if (isMobile()) UI.sheet.snapTo('half');
     if (fly) app.flyTo(p.lat, p.lon, Math.max(map.getZoom(), 9.5));
     const ref = p.ref || state.spots.find((x) => x.id === p.id) || {};
     app.inspect(p.lat, p.lon, {
+      noReveal: fly,
       kind: p.kind, kindLabel: p.kind === 'spot' ? 'Our spot' : 'Suggested spot', title: p.name, name: p.name, id: p.id,
       srcId: p.ref ? p.ref.id : undefined, kindKey: ref.kind, zone: Number.isInteger(ref.zone) ? ref.zone : undefined, hz: ref.hz && ref.hz.prof ? ref.hz : null,
     });
@@ -248,16 +276,36 @@
     state.inspect = d;
     if (!ctx.kind || ctx.kind === 'pin') showPick(lat, lon); else if (pickMarker) { pickMarker.remove(); pickMarker = null; }
     UI.renderInspector(d);
+    if (isMobile()) {
+      // on a phone the place card lives in the sheet: bring it to half height and keep the pin in view above it
+      if (!UI.sheet.is('half')) UI.sheet.snapTo('half');
+      $('#inspector').scrollTop = 0;
+      if (!ctx.noReveal) setTimeout(() => revealOnMap(lat, lon), 40);
+    }
     const upd = () => { if (token === inspectToken) UI.renderInspector(d); };
     if (d.zone === undefined) D.lpZone(lat, lon).then((z) => { d.zone = z; upd(); });
     D.pointWx(lat, lon).then((wx) => { d.wx = wx; upd(); }).catch((e) => { d.wxErr = e; upd(); });
     if (!ctx.title && !ctx.name) D.placeName(lat, lon).then((n) => { if (n) { d.title = d.name = `Near ${n}`; upd(); } });
   };
-  app.closeInspector = () => {
+  app.closeInspector = ({ keepPin = false } = {}) => {
     state.inspect = null;
     inspectToken++;
     UI.renderInspector(null);
-    if (pickMarker) { pickMarker.remove(); pickMarker = null; }
+    if (pickMarker && !keepPin) { pickMarker.remove(); pickMarker = null; }
+  };
+  // Make an inspected point the home base. Changing home resets the spot suggestions, so offer an Undo.
+  app.moveHome = async (p) => {
+    const prev = state.home ? { ...state.home } : null, prevSug = state.suggestions.slice();
+    const near15 = prev && U.distKm(prev, p) < 15;
+    const m = /^Near (.+)$/.exec(p.name || '');
+    let name = near15 ? prev.name : m ? m[1] : p.name && !/^(Dropped pin|Dark )/.test(p.name) ? p.name : null;
+    if (!name) name = (await D.placeName(p.lat, p.lon)) || (prev ? prev.name : 'Home');
+    app.closeInspector();
+    app.setHome({ lat: p.lat, lon: p.lon, name }, { fly: false });
+    UI.toast(`Home is now ${near15 ? 'here' : name}.`, prev ? {
+      timeout: 8000,
+      action: { label: 'Undo', run: () => { app.setHome(prev, { fly: false }); state.suggestions = prevSug; save('sug'); drawSpots(); UI.renderSpots(); } },
+    } : {});
   };
   app.checkHorizon = async (d) => {
     d.hz = 'loading';
@@ -408,6 +456,7 @@
       drawSpots();
       UI.renderSpots();
       if (state.suggestions.length) {
+        if (isMobile()) { UI.sheet.snapTo('half'); scrollWithin($('#tab-spots'), $('#suggestList'), 10); }
         const b = L.latLngBounds(state.suggestions.map((x) => [x.lat, x.lon]));
         b.extend([home.lat, home.lon]);
         app.flyToBounds(b);
@@ -537,8 +586,10 @@
     if (!state.settings.layers.best) { state.settings.layers.best = true; save('settings'); applyLayers(); }
     if (inRange) app.setTime(U.floorHour(n.from) + 1.5 * U.HOUR, { live: false, plan: true }); else updateBest();
     drawPlan();
+    if (isMobile() && state.inspect) app.closeInspector();
     UI.setTab('tonight');
     UI.renderNights();
+    if (isMobile()) { UI.sheet.snapTo('half'); scrollWithin($('#tab-tonight'), $('#nights'), 10); }
     if (state.plan.areas.length) {
       const b = L.latLngBounds(state.plan.areas.map((a) => [a.lat, a.lon]));
       b.extend([state.home.lat, state.home.lon]);
@@ -663,13 +714,26 @@
     U.$$('.chip[data-layer]').forEach((b) => b.setAttribute('aria-pressed', String(!!ly[b.dataset.layer])));
   }
 
-  // The legend shows by default on screens tall enough to fit it beside the layer buttons
-  const legendShown = () => (typeof state.settings.legend === 'boolean' ? state.settings.legend : window.innerHeight > 760);
+  // On big screens the legend sits open beside the layer buttons. On phones and short screens it is a
+  // pop-up map key (with the map credits) that starts closed and closes on the next tap of the map.
+  let keyOpen = false, keyPrevSnap = null;
+  const compactKey = () => isMobile() || shortMq.matches;
+  // The key covers part of a small map, so on a phone the sheet steps down to its tab bar while it is open
+  function setKey(open) {
+    keyOpen = open;
+    if (isMobile()) {
+      if (open && !UI.sheet.is('peek')) { keyPrevSnap = UI.sheet.snap; UI.sheet.snapTo('peek'); }
+      else if (!open && keyPrevSnap) { if (UI.sheet.is('peek')) UI.sheet.snapTo(keyPrevSnap === 'full' ? 'half' : keyPrevSnap); keyPrevSnap = null; }
+    }
+    UI.renderLegend();
+    applyLegend();
+  }
+  const legendShown = () => (compactKey() ? keyOpen : typeof state.settings.legend === 'boolean' ? state.settings.legend : window.innerHeight > 760);
   function applyLegend() {
     const show = legendShown();
     $('#legend').classList.toggle('off', !show);
     $('#legendBtn').setAttribute('aria-pressed', String(show));
-    $('#legendBtn').setAttribute('aria-label', show ? 'Hide map legend' : 'Show map legend');
+    $('#legendBtn').setAttribute('aria-label', show ? 'Hide the map key' : 'Show the map key and credits');
   }
 
   // ---------- Cloud grid coverage ----------
@@ -726,7 +790,8 @@
     drawSpots();
     drawRadius();
     $('#homeChipText').textContent = state.home.name;
-    if (fly) setTimeout(() => app.flyTo(state.home.lat, state.home.lon, 8, { duration: 2.4 }), 300);
+    if (fly) setTimeout(() => app.flyTo(state.home.lat, state.home.lon, isMobile() ? 7 : 8, { duration: 2.4 }), 300);
+    hintOnce();
     D.loadCloudGrid(state.home.lat, state.home.lon).catch((e) => console.warn('Cloud grid failed', e));
     app.clearPlan(false);
     refreshNights();
@@ -737,6 +802,13 @@
     UI.renderSpots();
     UI.renderSpace();
   }
+  // Phones start with the map key closed, so say once what the colors mean
+  function hintOnce() {
+    if (!isMobile() || !state.home || U.store.get('aa.hintKey', 0)) return;
+    U.store.set('aa.hintKey', 1);
+    setTimeout(() => UI.toast('Gold on the map is clear, dark sky. The ⓘ button has the full key.', { timeout: 8000 }), 3200);
+  }
+  const fineTune = coarse ? 'To fine-tune it, tap the exact spot and choose Set as home.' : 'Drag the home pin to fine-tune it.';
   function bindWelcome() {
     let results = [];
     $('#homeForm').addEventListener('submit', async (e) => {
@@ -762,7 +834,7 @@
       if (!b) return;
       const r = results[+b.dataset.i];
       app.setHome({ lat: r.lat, lon: r.lon, name: r.name });
-      UI.toast(`Home set to ${r.name}. Drag the home pin to fine-tune it.`);
+      UI.toast(`Home set to ${r.name}. ${fineTune}`);
     });
     $('#useLocation').addEventListener('click', () => {
       if (!navigator.geolocation) { UI.toast('This browser cannot share its location. Search or pick on the map instead.'); return; }
@@ -772,7 +844,7 @@
         const { latitude: lat, longitude: lon } = pos.coords;
         const name = (await D.placeName(lat, lon)) || 'Home';
         app.setHome({ lat, lon, name });
-        UI.toast('Home set from your location. Drag the pin to adjust.');
+        UI.toast(`Home set from your location. ${fineTune}`);
       }, () => {
         $('#useLocation').disabled = false;
         UI.toast('Location is blocked or unavailable. Search for your town or pick on the map.', { kind: 'error' });
@@ -782,7 +854,8 @@
       state.picking = true;
       $('#map').classList.add('picking');
       hideWelcome();
-      UI.toast('Click your home on the map.', { timeout: 0, action: { label: 'Cancel', run: () => { state.picking = false; $('#map').classList.remove('picking'); if (!state.home) app.showWelcome(); } } });
+      if (isMobile()) UI.sheet.snapTo('peek');
+      UI.toast(`${coarse ? 'Tap' : 'Click'} your home on the map.`, { timeout: 0, action: { label: 'Cancel', run: () => { state.picking = false; $('#map').classList.remove('picking'); if (!state.home) app.showWelcome(); } } });
     });
   }
 
@@ -808,8 +881,9 @@
       if (!b) return;
       const x = res[+b.dataset.i];
       UI.closeModal();
+      if (isMobile()) UI.sheet.snapTo('half');
       app.flyTo(x.lat, x.lon, 10);
-      app.inspect(x.lat, x.lon, { title: x.name, name: x.name, kindLabel: x.admin || 'Place' });
+      app.inspect(x.lat, x.lon, { noReveal: true, title: x.name, name: x.name, kindLabel: x.admin || 'Place' });
     });
   };
 
@@ -1056,6 +1130,7 @@
     checkAuroraAlert();
   });
   AA.on('kp', () => { app.recomputeNights(); UI.renderLive(); UI.renderTonight(); UI.rebuildTimeline(); UI.renderSpace(); UI.renderLegend(); drawReach(); updateBest(); checkAuroraAlert(); });
+  AA.on('sheet', () => { fxDirty = true; });
   AA.on('site', (s) => { if (fx) fx.setSite(s); updateBest(); if (state.inspect) UI.renderInspector(state.inspect); });
   AA.on('sw', () => {
     UI.renderLive();
@@ -1083,9 +1158,12 @@
     if (!document.hidden) {
       const c = calm();
       const tSec = c ? 120 : now / 1000;
-      if (fx && (mapMoving || fxDirty || fx.busy || (!c && now - lastFx > 32))) { fx.render(tSec); lastFx = now; fxDirty = false; }
-      if (!c && state.settings.layers.aurora) particles.step(dt);
-      else if (mapMoving) particles.step(0);
+      // nothing to draw while a full-height sheet covers the map; phones also run the map effects at a gentler rate
+      if (!(isMobile() && UI.sheet.is('full'))) {
+        if (fx && (mapMoving || fxDirty || fx.busy || (!c && now - lastFx > (coarse ? 50 : 32)))) { fx.render(tSec); lastFx = now; fxDirty = false; }
+        if (!c && state.settings.layers.aurora) particles.step(dt);
+        else if (mapMoving) particles.step(0);
+      }
       if (playing) advancePlay(dt);
       if (UI.activeTab === 'space' && !c) sw.step(dt);
       if (welcomeSky && !$('#welcome').hidden) welcomeSky.render(c ? 80 : now / 1000);
@@ -1098,8 +1176,16 @@
     U.$$('.tab-btn').forEach((b) => b.addEventListener('click', () => {
       UI.setTab(b.dataset.tab);
       drawRadius();
-      if (isMobile() && !$('#panel').classList.contains('expanded')) $('#panel').classList.add('expanded');
+      if (UI.sheet.is('peek')) UI.sheet.snapTo('half', { user: true });
     }));
+    // on a phone the live strip doubles as a shortcut to the space weather tab
+    $('#live').addEventListener('click', () => {
+      if (!isMobile()) return;
+      if (state.inspect) app.closeInspector();
+      UI.setTab('space');
+      drawRadius();
+      if (UI.sheet.is('peek')) UI.sheet.snapTo('half', { user: true });
+    });
     U.$$('#tab-tonight .seg button').forEach((b) => b.addEventListener('click', () => {
       state.settings.mode = b.dataset.mode;
       save('settings');
@@ -1109,13 +1195,21 @@
       updateBest();
     }));
     $('#backHome').onclick = () => { app.selectPlace(null); if (state.home) app.flyTo(state.home.lat, state.home.lon); };
+    // where a button shows only its icon (tablets, a phone on its side), say what was switched
+    const labelHidden = (b) => { const sp = b.querySelector('span'); return !!sp && getComputedStyle(sp).display === 'none'; };
     U.$$('.chip[data-layer]').forEach((b) => b.addEventListener('click', () => {
       const k = b.dataset.layer;
       state.settings.layers[k] = !state.settings.layers[k];
       save('settings');
       applyLayers();
+      if (labelHidden(b)) UI.toast(`${b.querySelector('span').textContent} ${state.settings.layers[k] ? 'on' : 'off'}`, { timeout: 1400 });
     }));
-    U.$$('.base-seg button').forEach((b) => b.addEventListener('click', () => { state.settings.base = b.dataset.base; save('settings'); applyBase(); }));
+    U.$$('.base-seg button').forEach((b) => b.addEventListener('click', () => {
+      state.settings.base = b.dataset.base;
+      save('settings');
+      applyBase();
+      if (labelHidden(b)) UI.toast(`${b.querySelector('span').textContent} map`, { timeout: 1400 });
+    }));
     $('#zoomIn').onclick = () => map.zoomIn();
     $('#zoomOut').onclick = () => map.zoomOut();
     $('#goHome').onclick = () => { if (state.home) app.flyTo(state.home.lat, state.home.lon, Math.max(7, map.getZoom())); else app.showWelcome(); };
@@ -1125,8 +1219,10 @@
       app.flyTo(state.home.lat, state.home.lon, Math.max(7.5, map.getZoom()));
     };
     $('#legendBtn').onclick = () => {
+      if (compactKey()) { setKey(!keyOpen); return; }
       state.settings.legend = !legendShown();
       save('settings');
+      UI.renderLegend();
       applyLegend();
     };
     $('#searchBtn').onclick = () => app.openSearch();
@@ -1143,16 +1239,27 @@
     $('#shareBtn').onclick = () => app.openShare();
     $('#tlPlay').onclick = () => (playing ? app.stopPlay() : app.play());
     $('#tlNow').onclick = () => { app.stopPlay(); app.setTime(Date.now(), { live: true }); };
-    $('#sheetGrip').onclick = () => $('#panel').classList.toggle('expanded');
     map.on('click', (e) => {
-      if (state.picking) { app.setHome({ lat: e.latlng.lat, lon: U.wrapLon(e.latlng.lng), name: 'Home' }); UI.toast('Home set. Drag the home pin to fine-tune it.'); return; }
+      if (state.picking) { app.setHome({ lat: e.latlng.lat, lon: U.wrapLon(e.latlng.lng), name: 'Home' }); UI.toast(`Home set. ${fineTune}`); return; }
+      if (compactKey() && keyOpen) { setKey(false); return; }
       app.inspect(e.latlng.lat, U.wrapLon(e.latlng.lng), { kind: 'pin' });
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && $('#modal').hidden && state.inspect) app.closeInspector();
     });
-    const onResize = U.debounce(() => { UI.moveInk(); UI.rebuildTimeline(); UI.renderTonight(); applyLegend(); fxDirty = true; }, 150);
+    const onResize = U.debounce(() => {
+      UI.sheet.refresh();
+      map.invalidateSize();
+      UI.moveInk(); UI.rebuildTimeline(); UI.renderTonight(); UI.renderLegend(); applyLegend();
+      fxDirty = true;
+    }, 150);
     window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    // iOS can leave the page scrolled after the keyboard closes; put the fixed layout back
+    document.addEventListener('focusout', () => setTimeout(() => {
+      const a = document.activeElement;
+      if (!a || !a.matches || !a.matches('input, textarea, select')) window.scrollTo(0, 0);
+    }, 120));
     document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { UI.moveInk(); UI.rebuildTimeline(); UI.renderTonight(); });
   }
@@ -1164,6 +1271,7 @@
     $('#nightBtn').setAttribute('aria-pressed', String(!!state.settings.nightVision));
     $('#alertBtn').setAttribute('aria-pressed', String(!!state.settings.alerts));
     $('#homeChipText').textContent = state.home ? state.home.name : 'Set home';
+    UI.initSheet();
     applyBase();
     applyLayers();
     placeHome();
@@ -1181,7 +1289,11 @@
     applyLegend();
     UI.renderLive();
     UI.rebuildTimeline();
-    if (state.home) app.defaultTime();
+    if (state.home) {
+      app.defaultTime();
+      app.centerOn(state.home.lat, state.home.lon, isMobile() ? 6.5 : 7.5);
+      hintOnce();
+    }
     const importing = checkImport();
     if (!state.home && !importing) app.showWelcome();
     if (location.protocol === 'file:') {

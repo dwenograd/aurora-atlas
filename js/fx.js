@@ -20,7 +20,11 @@
   //  2. Clouds: forecast cloud cover as drifting fog, with stars twinkling wherever it's clear.
   //  3. Aurora: NOAA's OVATION probability as moving curtains.
   const FRAG_MAP = `
+    #ifdef GL_FRAGMENT_PRECISION_HIGH
     precision highp float;
+    #else
+    precision mediump float;
+    #endif
     uniform vec2 uRes; uniform vec4 uView; uniform float uPpd; uniform vec2 uAnchor; uniform float uDpr; uniform float uTime;
     uniform sampler2D uOv; uniform float uAurora;
     uniform sampler2D uCloud; uniform vec4 uCBox; uniform vec2 uCN; uniform float uCMix; uniform float uClouds;
@@ -56,7 +60,7 @@
           vec4 c = cloudAt(vec2(cu, cv));
           float cc = mix(c.r, c.g, uCMix);
           float low = mix(c.b, c.a, uCMix);
-          float edge = smoothstep(0.0, 0.05, cu) * smoothstep(0.0, 0.05, 1.0 - cu) * smoothstep(0.0, 0.05, cv) * smoothstep(0.0, 0.05, 1.0 - cv);
+          float edge = smoothstep(0.0, 0.12, cu) * smoothstep(0.0, 0.12, 1.0 - cu) * smoothstep(0.0, 0.12, cv) * smoothstep(0.0, 0.12, 1.0 - cv);
 
           if (uBest > 0.002) {
             vec2 sc = vec2((cu * (uSN.x - 1.0) + 0.5) / uSN.x, (cv * (uSN.y - 1.0) + 0.5) / uSN.y);
@@ -316,7 +320,7 @@
   };
 
   // ---------- Aurora particles: rising ray sparks wherever NOAA's oval is ----------
-  FX.createParticles = (map) => {
+  FX.createParticles = (map, opts = {}) => {
     const pane = map.createPane('particlePane');
     pane.style.zIndex = 320;
     const canvas = document.createElement('canvas');
@@ -349,14 +353,14 @@
     }
     function step(dt) {
       const size = map.getSize();
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const dpr = Math.min(window.devicePixelRatio || 1, opts.dpr || 2);
       const W = Math.round(size.x * dpr), H = Math.round(size.y * dpr);
       if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; canvas.style.width = size.x + 'px'; canvas.style.height = size.y + 'px'; }
       L.DomUtil.setPosition(canvas, map.containerPointToLayerPoint([0, 0]));
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       ctx.clearRect(0, 0, size.x, size.y);
       if (!AA.D.ov || amount <= 0.01) { P.length = 0; return; }
-      const target = Math.round(240 * amount);
+      const target = Math.round((opts.max || 240) * amount);
       let tries = 0;
       while (P.length < target && tries++ < 36) {
         const x = Math.random() * size.x, y = Math.random() * size.y;
@@ -386,7 +390,11 @@
 
   // ---------- Welcome sky: aurora over mountains and a still lake ----------
   const FRAG_WELCOME = `
+    #ifdef GL_FRAGMENT_PRECISION_HIGH
     precision highp float;
+    #else
+    precision mediump float;
+    #endif
     uniform vec2 uRes; uniform float uTime;
     ${NOISE}
     float fbm5(vec2 p) { float v = 0.0; float a = 0.5; for (int i = 0; i < 5; i++) { v += a * noise(p); p = p * 2.03 + vec2(11.7, 5.3); a *= 0.5; } return v; }
@@ -484,10 +492,11 @@
     let last = 0;
     return {
       render(tSec) {
-        if (tSec - last < 1 / 40) return; // ~40 fps is plenty for a slow sky
-        last = tSec;
         const r = canvas.getBoundingClientRect();
-        const scale = Math.min(window.devicePixelRatio || 1, 1.25) * 0.7;
+        const small = Math.min(r.width, r.height) < 520; // phones: fewer pixels and frames for the same slow sky
+        if (tSec - last < 1 / (small ? 30 : 40)) return;
+        last = tSec;
+        const scale = Math.min(window.devicePixelRatio || 1, 1.25) * (small ? 0.55 : 0.7);
         const W = Math.max(1, Math.round(r.width * scale)), H = Math.max(1, Math.round(r.height * scale));
         if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
         gl.viewport(0, 0, W, H);

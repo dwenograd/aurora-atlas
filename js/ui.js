@@ -422,6 +422,7 @@
     c.addEventListener('pointermove', hourlyTip);
     c.addEventListener('pointerdown', hourlyTip);
     c.addEventListener('pointerleave', () => { $('#hourlyTip').hidden = true; });
+    c.addEventListener('pointercancel', () => { $('#hourlyTip').hidden = true; });
   };
 
   // ---------- Coming nights ----------
@@ -442,9 +443,10 @@
     const nextA = list.find((n) => n.lvl && n.lvl.s >= 0.45 && (!n.clouds || (n.bestA && n.bestA.clear >= 0.4)));
     const bestS = near.reduce((b, n) => (n.bestS && (!b || n.bestS.s > b.bestS.s) ? n : b), null);
     const lines = [];
-    if (nextA) lines.push(`<b>Next aurora chance:</b> ${dayName(nextA.from)} ${U.fmtDate(nextA.from)}, Kp ${nextA.kp.toFixed(1)} (${nextA.lvl.label.toLowerCase()})${nextA.bestA ? `, clearest ${esc(placeLabel(nextA.bestA))}` : ', too far out for clouds'}.`);
+    const when = (n) => (n.from <= Date.now() ? 'tonight' : `${dayName(n.from)} ${U.fmtDate(n.from)}`);
+    if (nextA) lines.push(`<b>Next aurora chance:</b> ${when(nextA)}, Kp ${nextA.kp.toFixed(1)} (${nextA.lvl.label.toLowerCase()})${nextA.bestA ? `, clearest ${esc(placeLabel(nextA.bestA))}` : ', too far out for clouds'}.`);
     else lines.push(`<b>No aurora-strength nights</b> in NOAA's outlook yet. From home you need about Kp ${need.toFixed(1)}; the outlook tops out at Kp ${Math.max(...list.map((n) => n.kp || 0))}.`);
-    if (bestS && bestS.bestS.s > 0.25) lines.push(`<b>Best stargazing:</b> ${dayName(bestS.from)} ${U.fmtDate(bestS.from)}, ${Math.round(bestS.bestS.clear * 100)}% clear ${esc(placeLabel(bestS.bestS))}, moon ${Math.round(bestS.moon * 100)}%.`);
+    if (bestS && bestS.bestS.s > 0.25) lines.push(`<b>Best stargazing:</b> ${when(bestS)}, ${Math.round(bestS.bestS.clear * 100)}% clear ${esc(placeLabel(bestS.bestS))}, moon ${Math.round(bestS.moon * 100)}%.`);
     let planHtml = '';
     if (plan) {
       const z = (a) => (a.zone == null ? '' : `<span class="tag"><i class="sw" style="background:${Sky.lpColor(a.zone)}"></i>Bortle ${Sky.LP[a.zone].bortle}</span>`);
@@ -476,8 +478,8 @@
       return `<button class="far ${sel ? 'sel' : ''}" type="button" data-n="${i}" title="${esc(U.fmtDateLong(n.from))}: Kp ${n.kp ?? '–'}, moon ${Math.round(n.moon * 100)}%"><small>${U.fmtDay(n.from).slice(0, 2)} ${new Date(n.from).getDate()}</small><b style="color:${lvlColor(n)}">${n.kp ?? '–'}</b>${Sky.moonSVG(n.moonPhase)}</button>`;
     }).join('');
     box.innerHTML = head
-      + `<div class="nights-lede">${lines.map((l) => `<p>${l}</p>`).join('')}</div>`
       + planHtml
+      + `<div class="nights-lede">${lines.map((l) => `<p>${l}</p>`).join('')}</div>`
       + `<div class="night-list">${near.map((n) => row(n, list.indexOf(n))).join('')}</div>`
       + (far.length ? `<div class="sec-head" style="margin-top:14px"><h3>Further out</h3><span class="sec-note">NOAA 27-day outlook, no clouds yet</span></div><div class="far-grid">${farHtml}</div>` : '')
       + (N.cloudsOk ? '' : '<p class="plan-note">The cloud forecast did not load, so nights show Kp and moon only.</p>');
@@ -811,6 +813,190 @@
     });
   };
 
+  // ---------- Bottom sheet (phones) ----------
+  // The planner panel becomes a sheet with three stops: 'peek' (just its tab bar), 'half' and 'full'.
+  // It is always laid out at full height and slid down with a transform; its content scrolls only at
+  // 'full', like a native sheet. The timeline, map buttons and map key ride above it through --sv.
+  UI.SHEET_MQ = '(max-width: 760px) and (min-height: 541px), (max-width: 559px)'; // keep in step with styles.css
+  const SH = (UI.sheet = { enabled: false, snap: 'half', vis: 0, target: 0, heights: { peek: 70, half: 270, full: 560 } });
+  SH.is = (name) => SH.enabled && SH.snap === name;
+  SH.snapTo = () => {};
+  SH.refresh = () => {};
+  // On phones the place card lives inside the sheet; elsewhere it floats over the map
+  UI.placeInspector = () => {
+    const ins = $('#inspector'), panel = $('#panel');
+    if (SH.enabled && ins.parentElement !== panel) panel.appendChild(ins);
+    if (!SH.enabled && ins.parentElement === panel) $('#app').insertBefore(ins, $('#toasts'));
+    panel.classList.toggle('inspecting', SH.enabled && !ins.hidden);
+    $('#app').classList.toggle('card-open', !SH.enabled && !ins.hidden);
+  };
+  UI.initSheet = () => {
+    const panel = $('#panel'), grip = $('#sheetGrip'), tabs = panel.querySelector('.tabs'), appEl = $('#app');
+    const mq = window.matchMedia(UI.SHEET_MQ);
+    const followers = [$('#timeline'), $('.mapctl'), $('#legend')];
+    const STOPS = ['peek', 'half', 'full'];
+    let justDragged = false, lastSnapAt = 0, pd = null, ts = null, watchdog = 0;
+
+    function measure() {
+      const H = window.innerHeight;
+      const sab = parseFloat(getComputedStyle(panel).paddingBottom) || 0;
+      const full = Math.max(240, Math.round(H - $('.topbar').getBoundingClientRect().bottom - 6));
+      const peek = Math.round((grip.offsetHeight || 22) + (tabs.offsetHeight || 47) + sab);
+      const half = Math.round(Math.min(Math.max(peek + 100, Math.min(H * 0.4, 380)), full - 40));
+      SH.heights = { peek, half, full };
+    }
+    function setVis(v) {
+      SH.vis = v;
+      panel.style.transform = `translateY(${Math.round(SH.heights.full - v)}px)`;
+      // followers stop at the half line; a taller sheet simply slides over them
+      const fv = String(Math.round(Math.min(v, SH.heights.half)));
+      for (const f of followers) if (f) f.style.setProperty('--sv', fv);
+    }
+    SH.snapTo = (name, { animate = true, user = false } = {}) => {
+      if (!SH.enabled) return;
+      if (!STOPS.includes(name)) name = 'half';
+      SH.snap = name;
+      SH.target = SH.heights[name];
+      panel.dataset.snap = name;
+      grip.setAttribute('aria-label', name === 'full' ? 'Shrink the panel' : 'Expand the panel');
+      appEl.classList.toggle('sheet-drag', !animate);
+      setVis(SH.target);
+      if (!animate) { void panel.offsetHeight; appEl.classList.remove('sheet-drag'); }
+      if (user) U.store.set('aa.sheet', name === 'peek' ? 'peek' : 'half');
+      lastSnapAt = performance.now();
+      AA.emit('sheet', name);
+    };
+    // Where a released drag ends up. v is the finger's speed in px/ms (positive downward), from0 the height
+    // the drag started at. A flick, or a drag of more than 56px, goes on to the next stop that way (skipping
+    // one it has already passed); anything smaller springs back to the nearest stop.
+    function settle(v, from0) {
+      const cur = SH.vis, hs = SH.heights, moved = cur - from0;
+      const up = v < -0.45 || (v <= 0.45 && moved > 56), down = v > 0.45 || (v >= -0.45 && moved < -56);
+      let name;
+      if (up) name = STOPS.filter((k) => hs[k] > from0 + 8).find((k) => hs[k] >= cur - 28) || 'full';
+      else if (down) name = STOPS.filter((k) => hs[k] < from0 - 8).reverse().find((k) => hs[k] <= cur + 28) || 'peek';
+      else name = STOPS.reduce((b, k) => (Math.abs(hs[k] - cur) < Math.abs(hs[b] - cur) ? k : b), 'peek');
+      justDragged = true;
+      setTimeout(() => { justDragged = false; }, 80);
+      SH.snapTo(name, { user: true });
+    }
+    // speeds come from the events' own timestamps, so a busy main thread cannot turn a flick into a slow drag
+    const track = (g, y, t) => {
+      if (t > g.lastT) g.v = 0.6 * g.v + 0.4 * ((y - g.lastY) / (t - g.lastT));
+      g.lastY = y;
+      g.lastT = t;
+    };
+    const released = (g, e) => (!e || !(e.timeStamp - g.lastT <= 140) ? 0 : g.v);
+
+    // Pointer drags. The header always moves the sheet; below 'full' a finger anywhere on it does too.
+    // Capture goes to the panel itself, so a re-render under the finger cannot strand the drag.
+    panel.addEventListener('pointerdown', (e) => {
+      pd = null;
+      if (!SH.enabled || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      const head = !!e.target.closest('.sheet-grip, .tabs, .ins-head');
+      if (!head && (SH.snap === 'full' || e.pointerType === 'mouse' || e.target.closest('input, textarea, select'))) return;
+      pd = { id: e.pointerId, x0: e.clientX, y0: e.clientY, vis0: SH.vis, mode: null, lastY: e.clientY, lastT: e.timeStamp, v: 0 };
+    });
+    panel.addEventListener('pointermove', (e) => {
+      if (!pd || e.pointerId !== pd.id) return;
+      const dx = e.clientX - pd.x0, dy = e.clientY - pd.y0;
+      if (!pd.mode) {
+        if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
+        if (Math.abs(dx) > Math.abs(dy) * 1.2) { pd = null; return; }
+        pd.mode = 'drag';
+        try { panel.setPointerCapture(pd.id); } catch (err) { /* not capturable */ }
+        appEl.classList.add('sheet-drag');
+      }
+      track(pd, e.clientY, e.timeStamp);
+      setVis(U.clamp(pd.vis0 - dy, SH.heights.peek, SH.heights.full));
+    });
+    const pointerEnd = (e) => {
+      if (!pd || e.pointerId !== pd.id) return;
+      const g = pd;
+      pd = null;
+      if (g.mode === 'drag') settle(released(g, e), g.vis0);
+    };
+    panel.addEventListener('pointerup', pointerEnd);
+    panel.addEventListener('pointercancel', pointerEnd);
+    // a drag that started on a button must not also press it
+    panel.addEventListener('click', (e) => { if (justDragged) { e.stopPropagation(); e.preventDefault(); } }, true);
+    grip.addEventListener('click', () => { if (SH.enabled) SH.snapTo(SH.snap === 'half' ? 'full' : 'half', { user: true }); });
+
+    // At 'full' the content scrolls natively; pulling down from its top shrinks the sheet.
+    const touchDone = (e) => {
+      clearTimeout(watchdog);
+      const g = ts;
+      ts = null;
+      if (g && g.mode === 'drag') settle(released(g, e), g.vis0);
+    };
+    panel.addEventListener('touchstart', (e) => {
+      ts = null;
+      if (!SH.enabled || SH.snap !== 'full' || e.touches.length !== 1) return;
+      if (e.target.closest('.sheet-grip, .tabs, .ins-head, input, textarea, select')) return;
+      const t = e.touches[0];
+      ts = { x0: t.clientX, y0: t.clientY, vis0: SH.vis, mode: null, sc: e.target.closest('.tab-body, .inspector'), lastY: t.clientY, lastT: e.timeStamp, v: 0 };
+    }, { passive: true });
+    panel.addEventListener('touchmove', (e) => {
+      if (!ts || e.touches.length !== 1) return;
+      const t = e.touches[0], dx = t.clientX - ts.x0, dy = t.clientY - ts.y0;
+      if (!ts.mode) {
+        if (Math.abs(dx) < 7 && Math.abs(dy) < 7) return;
+        ts.mode = dy > 0 && Math.abs(dy) > Math.abs(dx) && (!ts.sc || ts.sc.scrollTop <= 0) ? 'drag' : 'pass';
+        if (ts.mode === 'drag') { ts.y0 = t.clientY; ts.lastY = t.clientY; ts.lastT = e.timeStamp; appEl.classList.add('sheet-drag'); }
+      }
+      if (ts.mode !== 'drag') return;
+      if (e.cancelable) e.preventDefault();
+      track(ts, t.clientY, e.timeStamp);
+      setVis(U.clamp(ts.vis0 - (t.clientY - ts.y0), SH.heights.peek, SH.heights.full));
+      clearTimeout(watchdog);
+      watchdog = setTimeout(() => touchDone(null), 1500); // if the touched element is re-rendered away, its end event never arrives
+    }, { passive: false });
+    panel.addEventListener('touchend', touchDone);
+    panel.addEventListener('touchcancel', touchDone);
+
+    // Mouse wheel and trackpad (a narrow desktop window): scrolling down opens the sheet, up at the top shrinks it
+    panel.addEventListener('wheel', (e) => {
+      if (!SH.enabled || performance.now() - lastSnapAt < 450) return;
+      if (SH.snap !== 'full' && e.deltaY > 4) SH.snapTo('full', { user: true });
+      else if (SH.snap === 'full' && e.deltaY < -4) {
+        const sc = e.target.closest('.tab-body, .inspector');
+        if (!sc || sc.scrollTop <= 0) SH.snapTo('half', { user: true });
+      }
+    }, { passive: true });
+    // typing needs room above the keyboard
+    panel.addEventListener('focusin', (e) => {
+      if (SH.enabled && SH.snap !== 'full' && e.target.matches && e.target.matches('input, textarea, select')) SH.snapTo('full');
+    });
+
+    function refresh() {
+      if (!mq.matches) {
+        if (SH.enabled) {
+          SH.enabled = false;
+          panel.style.transform = '';
+          panel.style.height = '';
+          delete panel.dataset.snap;
+          appEl.classList.remove('sheet-drag');
+          for (const f of followers) if (f) f.style.removeProperty('--sv');
+          AA.emit('sheet', null);
+        }
+        UI.placeInspector();
+        return;
+      }
+      if (!SH.enabled) {
+        SH.enabled = true;
+        SH.snap = U.store.get('aa.sheet', 'half') === 'peek' ? 'peek' : 'half';
+      }
+      UI.placeInspector();
+      measure();
+      panel.style.height = `${SH.heights.full}px`;
+      SH.snapTo(SH.snap, { animate: false });
+    }
+    SH.refresh = refresh;
+    if (mq.addEventListener) mq.addEventListener('change', refresh);
+    else if (mq.addListener) mq.addListener(refresh);
+    refresh();
+  };
+
   // ---------- Timeline ----------
   const TL = (UI.TL = { t0: 0, span: 48 * U.HOUR, rows: [], sun: [], moon: [], bg: null, w: 0, h: 0 });
   UI.rebuildTimeline = () => {
@@ -837,7 +1023,11 @@
     c.height = Math.round(h * dpr);
     const ctx = c.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    const top = 6, bot = h - 15, bandH = bot - top;
+    // short timelines (phones) drop the hour labels and give that height to the band
+    const labels = h >= 44;
+    const top = labels ? 6 : 5, bot = h - (labels ? 15 : 2), bandH = bot - top;
+    TL.top = top;
+    TL.bot = bot;
     U.roundRect(ctx, 0, top, w, bandH, 8);
     ctx.save();
     ctx.clip();
@@ -905,19 +1095,29 @@
       ctx.fillStyle = 'rgba(232,237,247,0.75)';
       ctx.fillText(new Date(m).toLocaleDateString([], { weekday: 'short' }).toUpperCase(), x + 5, top + 13);
     }
-    // hour labels
-    ctx.font = '500 10.5px "JetBrains Mono", ui-monospace, monospace';
-    ctx.fillStyle = 'rgba(163,174,196,0.8)';
-    ctx.textAlign = 'center';
-    const step = w < 520 ? 6 : 3;
-    for (let t = TL.t0; t <= TL.t0 + TL.span; t += U.HOUR) {
-      const hr = new Date(t).getHours();
-      if (hr % step !== 0) continue;
-      const x = tlX(t, w);
-      if (x < 12 || x > w - 12) continue;
-      ctx.fillText(U.fmtHourTiny(t), x, h - 3);
+    if (labels) {
+      ctx.font = '500 10.5px "JetBrains Mono", ui-monospace, monospace';
+      ctx.fillStyle = 'rgba(163,174,196,0.8)';
+      ctx.textAlign = 'center';
+      const step = w < 520 ? 6 : 3;
+      for (let t = TL.t0; t <= TL.t0 + TL.span; t += U.HOUR) {
+        const hr = new Date(t).getHours();
+        if (hr % step !== 0) continue;
+        const x = tlX(t, w);
+        if (x < 12 || x > w - 12) continue;
+        ctx.fillText(U.fmtHourTiny(t), x, h - 3);
+      }
+      ctx.textAlign = 'left';
+    } else {
+      // no room for hour labels: tick 6 am, noon and 6 pm (midnight already has the day line)
+      ctx.strokeStyle = 'rgba(190,200,222,0.4)';
+      for (let t = TL.t0; t <= TL.t0 + TL.span; t += U.HOUR) {
+        const hr = new Date(t).getHours();
+        if (hr % 6 !== 0 || hr === 0) continue;
+        const x = tlX(t, w);
+        ctx.beginPath(); ctx.moveTo(x, bot - 6); ctx.lineTo(x, bot); ctx.stroke();
+      }
     }
-    ctx.textAlign = 'left';
     TL.bg = c;
     TL.w = w;
     TL.h = h;
@@ -933,14 +1133,14 @@
     const x = U.clamp(tlX(s.time, w), 1, w - 1);
     // dim the past part before "now"
     const nx = tlX(Date.now(), w);
-    if (nx > 0) { ctx.fillStyle = 'rgba(4,6,12,0.45)'; ctx.fillRect(0, 6, nx, h - 21); }
+    if (nx > 0) { ctx.fillStyle = 'rgba(4,6,12,0.45)'; ctx.fillRect(0, TL.top, nx, TL.bot - TL.top); }
     ctx.save();
     ctx.strokeStyle = 'rgba(4,6,12,0.75)';
     ctx.lineWidth = 4;
-    ctx.beginPath(); ctx.moveTo(x, 2); ctx.lineTo(x, h - 15); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x, 2); ctx.lineTo(x, TL.bot); ctx.stroke();
     ctx.strokeStyle = '#d9ffe9';
     ctx.lineWidth = 2;
-    ctx.beginPath(); ctx.moveTo(x, 2); ctx.lineTo(x, h - 15); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x, 2); ctx.lineTo(x, TL.bot); ctx.stroke();
     ctx.fillStyle = '#62f0a6';
     ctx.strokeStyle = 'rgba(4,6,12,0.8)';
     ctx.lineWidth = 2;
@@ -1025,14 +1225,20 @@
         <div class="lg-zones">${Sky.LP.map((z) => `<i style="background:rgb(${z.rgb.join(',')})" title="Zone ${z.id}: ${z.sqm}"></i>`).join('')}</div>
         <div class="lg-ticks"><span>22.0 dark</span><span>21.3</span><span>20.0</span><span>18.4</span><span>city</span></div></div>`);
     }
-    $('#legend').innerHTML = parts.join('');
+    // phones and short screens hide the map's own credit line, so the credits live in the map key
+    const attr = document.querySelector('.leaflet-control-attribution');
+    const needCredits = !!attr && getComputedStyle(attr).display === 'none';
+    const link = (href, text) => `<a href="${href}" target="_blank" rel="noopener">${text}</a>`;
+    const credits = `<div class="lg-credits">Map: Esri, HERE, Garmin, © ${link('https://www.openstreetmap.org/copyright', 'OpenStreetMap')} contributors. Light pollution: ${link('https://djlorenz.github.io/astronomy/lp/', 'D. Lorenz')}. Aurora and Kp: ${link('https://www.swpc.noaa.gov', 'NOAA SWPC')}. Clouds: ${link('https://open-meteo.com', 'Open-Meteo')}. Built with ${link('https://leafletjs.com', 'Leaflet')}.</div>`;
+    $('#legend').innerHTML = parts.length || needCredits ? parts.join('') + (needCredits ? credits : '') : '';
   };
 
   // ---------- Inspector ----------
   UI.renderInspector = (d) => {
     const box = $('#inspector');
-    if (!d) { box.hidden = true; return; }
+    if (!d) { box.hidden = true; UI.placeInspector(); UI.moveInk(); return; }
     box.hidden = false;
+    UI.placeInspector();
     const s = st();
     const ml = Sky.magLat(d.lat, d.lon), need = Sky.kpNeeded(ml);
     const title = d.title || d.name || 'Dropped pin';
@@ -1073,6 +1279,7 @@
       rows.push(['route', 'From home', U.fmtDist(km), `${U.compass(U.bearing(s.home, d))} of home, straight line`]);
     }
     const saved = s.spots.find((p) => Math.abs(p.lat - d.lat) < 1e-4 && Math.abs(p.lon - d.lon) < 1e-4);
+    const atHome = !!s.home && Math.abs(s.home.lat - d.lat) < 1e-5 && Math.abs(s.home.lon - d.lon) < 1e-5;
     box.innerHTML = `<div class="ins-head"><div style="min-width:0"><span class="eyebrow">${esc(d.kindLabel || (saved ? 'Our spot' : 'Dropped pin'))}</span><h3>${esc(title)}</h3>
         <button class="ins-coords" type="button" id="insCopy" title="Copy coordinates">${U.fmtCoord(d.lat, d.lon)}${icon('copy')}</button></div>
         <button class="icon-btn" type="button" id="insClose" aria-label="Close">${icon('close')}</button></div>
@@ -1081,6 +1288,7 @@
         ${saved ? `<button class="btn sm" type="button" disabled>${icon('check')}Saved</button>` : `<button class="btn primary sm" type="button" id="insSave">${icon('star')}Save spot</button>`}
         <button class="btn sm" type="button" id="insPlan">${icon('moon')}Plan tonight here</button>
         <a class="btn sm ghost" href="${UI.directionsUrl(d.lat.toFixed(5), d.lon.toFixed(5))}" target="_blank" rel="noopener">${icon('route')}Directions</a>
+        ${atHome ? '' : `<button class="btn sm ghost" type="button" id="insHome">${icon('home')}Set as home</button>`}
       </div>`;
     $('#insClose').onclick = () => app().closeInspector();
     $('#insPlan').onclick = () => app().selectPlace({ kind: d.kind || 'pin', lat: d.lat, lon: d.lon, name: title, id: saved ? saved.id : d.id });
@@ -1088,6 +1296,8 @@
     if (sv) sv.onclick = () => app().saveSpot({ lat: d.lat, lon: d.lon, name: d.name && d.name !== 'Dropped pin' ? d.name : title, kind: d.kindKey || null, zone: d.zone, hz: d.hz && d.hz.prof ? d.hz : null, srcId: d.srcId || null });
     const hb = $('#insHz');
     if (hb) hb.onclick = () => app().checkHorizon(d);
+    const hm = $('#insHome');
+    if (hm) hm.onclick = () => app().moveHome({ lat: d.lat, lon: d.lon, name: d.name || d.title || '' });
     $('#insCopy').onclick = () => {
       const txt = `${d.lat.toFixed(5)}, ${d.lon.toFixed(5)}`;
       if (navigator.clipboard) navigator.clipboard.writeText(txt).then(() => UI.toast('Coordinates copied.'), () => UI.toast(txt));

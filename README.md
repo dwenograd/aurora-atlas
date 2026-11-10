@@ -27,6 +27,12 @@ Chrome open the menu, then Install app.
 - **Night vision** (eye button): turns the whole page dim red at the spot.
 - **Aurora alerts** (bell button): a chime and notification while the page is open.
 
+## On a phone
+
+The map takes the top of the screen and the planner is a sheet at the bottom. Drag or flick the sheet's
+handle between three stops: just the tab bar, half, and full. Tap the map for a place card, tap ⓘ for the
+map key, and tap the live strip at the top for space weather. A phone on its side gets a side-panel layout.
+
 ## Sharing between devices
 
 Everything you save (home, spots, journal) stays in that browser. To move it to another
@@ -58,5 +64,9 @@ commit and push to `main`. GitHub Pages republishes within a minute or two and b
 the change on their next load.
 
 Local preview: `python -m http.server 8765` in this folder, then open http://localhost:8765.
+
+Before pushing a layout change, run the phone test: `node tools/phone_test.js 390 664` (the top of that
+file lists the other screen sizes and what it needs). It drives a headless browser with real touch
+gestures and checks the sheet, the place card, night vision and the map key.
 
 `tools/make_icons.py` redraws the app icons (pure Python, no libraries).
