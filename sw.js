@@ -1,19 +1,19 @@
 /* Aurora Atlas service worker: opens offline at a dark spot with the last forecast it saw.
    App files: network first, so updates show up right away. Map tiles: cached as you browse.
    Live data: network first, falling back to the last copy. */
-const SHELL_CACHE = 'aa-shell-v17';
+const SHELL_CACHE = 'aa-shell-v18';
 const TILE_CACHE = 'aa-tiles';
 const DATA_CACHE = 'aa-data';
 const SHELL = [
   './',
   './index.html',
-  './styles.css?v=17',
-  './js/util.js?v=17',
-  './js/sky.js?v=17',
-  './js/data.js?v=17',
-  './js/fx.js?v=17',
-  './js/ui.js?v=17',
-  './js/app.js?v=17',
+  './styles.css?v=18',
+  './js/util.js?v=18',
+  './js/sky.js?v=18',
+  './js/data.js?v=18',
+  './js/fx.js?v=18',
+  './js/ui.js?v=18',
+  './js/app.js?v=18',
   './manifest.webmanifest',
   './icons/icon-192.png',
 ];
@@ -79,6 +79,15 @@ async function tile(req) {
   const res = await net;
   return res || Response.error();
 }
+
+// Aurora alerts are shown through the worker (the only way phones allow); a tap brings the app forward
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  e.waitUntil(self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => {
+    for (const c of list) if ('focus' in c) return c.focus();
+    return self.clients.openWindow ? self.clients.openWindow('./') : null;
+  }));
+});
 
 self.addEventListener('fetch', (e) => {
   const req = e.request;

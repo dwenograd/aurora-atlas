@@ -19,26 +19,40 @@ Chrome open the menu, then Install app.
 - **Aurora**: NOAA's 30-minute OVATION forecast drawn as moving curtains (aurora overhead), plus a
   green dotted line showing how far south the aurora is likely to be seen at the timeline's Kp.
 - **Clouds** and **Light pollution** as their own layers (off by default; Best sky already blends them).
-- **Tonight**: a verdict for home or any spot, dark hours, moon, clouds, Kp you need, sky darkness
-  (Bortle), temperature and dew, hour by hour.
+- **When nothing is gold**, the map key says which of the four ingredients is failing in the view on
+  screen (night, moon, clouds, dark ground), and the open key lists all four with a tick or a cross.
+- **How dark is dark enough** (Settings): forgiving, balanced or strict about town glow. It bends the gold
+  map, the scores and the spot finder together.
+- **Roads** are drawn dimly over the map, a dotted box marks where the cloud and darkness data stop, and
+  when the aurora line is off the map a chip says how far north (or south) of home it is; tap it to see.
+- **Forecast**: tonight's verdict first, for home or any spot, then the coming nights, then the detail:
+  dark hours, moon, clouds, Kp you need, sky darkness (Bortle), temperature and dew, hour by hour.
 - **Spots**: finds the darkest, clearest ground within your radius, then the nearest real
-  viewpoint, campground, beach or boat launch there, checks the terrain toward the aurora, and ranks
-  them for tonight. Save the ones you like.
+  viewpoint, campground, beach or boat launch there, checks the drive from home (roads, not a straight
+  line) and the terrain toward the aurora, and ranks them for tonight. Each spot says whether it is a
+  drive-up, a short walk or a hike from the nearest road; hikes rank lower and their directions lead to
+  where the road ends. Save the ones you like.
+- **Where am I** (target button on the map): a dot for where you are and the sky at that spot.
 - **Space**: Kp now and forecast, solar wind (speed, density, Bz), NOAA alerts, 27-day outlook.
-- **Journal**: log your nights out with the conditions at the time.
-- **Night vision** (eye button): turns the whole page dim red at the spot.
-- **Aurora alerts** (bell button): a chime and notification while the page is open.
+- **Night vision** (eye button): turns the whole page dim red at the spot and keeps the screen awake.
+  Gold and green would look the same in red, so aurora ground is striped. On a phone, and always in night
+  vision, the map's shimmer stops after 25 seconds without a touch to save battery.
+- **Aurora alerts** (bell button): a chime and notification while the app is open. A background tab on a
+  computer keeps watching; a phone has to have it on screen.
+- **Old data**: when the newest NOAA reading is over 45 minutes old, or the device is offline, the top
+  strip turns amber and the timeline says what time the data is from.
 
 ## On a phone
 
 The map takes the top of the screen and the planner is a sheet at the bottom. Drag or flick the sheet's
-handle between three stops: just the tab bar, half, and full. Tap the map for a place card, tap the
-color key (or ⓘ) for the full map key, and tap the live strip at the top for space weather. A phone on
-its side gets a side-panel layout.
+handle between three stops: just the tab bar, half, and full. Tap the map for a place card (with the
+sheet down at its bar, the bar shows the place's name; tap it for the card). Tap the color key (or ⓘ)
+for the full map key, the moon button to step through the base maps, and the live strip at the top for
+space weather. A phone on its side gets a side-panel layout.
 
 ## Sharing between devices
 
-Everything you save (home, spots, journal) stays in that browser. To move it to another
+Everything you save (home, spots) stays in that browser. To move it to another
 device or to each other, use **Share** in the Spots tab or Settings and send the link. Opening the
 link offers to import it. The data rides inside the link after the `#`, which browsers never send
 to a server.
@@ -49,6 +63,7 @@ to a server.
 - Clouds, weather, elevation, place search: Open-Meteo
 - Light pollution: David J. Lorenz, Light Pollution Atlas 2025
 - Places to stand: OpenStreetMap contributors, via Photon by Komoot
+- Drive times: OSRM (project-osrm.org demo server), on OpenStreetMap roads, no traffic
 - Dropped-pin place names: BigDataCloud
 - Base maps: Esri. Sun and Moon positions: SunCalc. Map: Leaflet.
 

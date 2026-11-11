@@ -114,6 +114,22 @@ const check = (name, ok, detail = '') => { results.push({ name, ok: !!ok, detail
     check('map key strip sits on the map between the layer chips, the timeline and the map buttons', !!strip && key.y >= g.layers.b && key.b <= g.tl.y && key.x >= 0 && key.r <= g.ctl.x, JSON.stringify({ key, ctl: g.ctl }));
     check('map key strip names stargazing and aurora', keyTxt.some((t) => /Stargazing/.test(t)) && keyTxt.some((t) => /Aurora/.test(t)), JSON.stringify(keyTxt));
     check('map key strip leaves most of the map free', !!strip && g.tl.y - g.layers.b - key.h >= 110, `${g.tl.y - g.layers.b - (key ? key.h : 0)}px above the strip`);
+    // the top bar holds the alert bell and still shows every live reading in full
+    const bell = await rect('#alertBtn');
+    const liveFit = await page.evaluate(() => { const l = document.querySelector('#live'), segs = [...l.querySelectorAll('.live-seg')].filter((s) => s.getBoundingClientRect().width > 0); const last = segs[segs.length - 1].querySelector('.live-v').getBoundingClientRect(); return { last: Math.round(last.right), edge: Math.round(l.getBoundingClientRect().right) }; });
+    check('alert bell is on the top bar', !!bell && bell.w >= 32 && bell.r <= W, JSON.stringify(bell));
+    check('live readings are not clipped by the buttons', liveFit.last <= liveFit.edge, JSON.stringify(liveFit));
+    // map buttons: home, where am I, base map, key: all between the chips and the timeline
+    const btns = await page.evaluate(() => ['#goHome', '#locateBtn', '#baseCycle', '#legendBtn'].map((s) => { const r = document.querySelector(s).getBoundingClientRect(); return { s, w: Math.round(r.width), y: Math.round(r.top), b: Math.round(r.bottom) }; }));
+    check('map buttons (home, where am I, base map, key) fit between the chips and the timeline', btns.every((b) => b.w >= 32 && b.y >= g.layers.b && b.b <= g.tl.y), JSON.stringify(btns));
+    // tonight's answer comes first and shows without scrolling at half
+    const vd = await rect('#verdict'), ng = await rect('#nights'), gz = await rect('#verdict .gauge'), vt = await rect('#vTitle');
+    check("tonight's verdict comes before the coming nights, and its score and headline show at half", vd.y < ng.y && !!gz && gz.b <= H && !!vt && vt.h > 10 && vt.b <= H, JSON.stringify({ vd, ng, gz, vt }));
+    // the map itself: roads, the edge of the forecast area, and how far off the aurora line is
+    const mapx = await page.evaluate(() => { const h = document.querySelector('#reachHint'), r = h.getBoundingClientRect(); return { roads: !!document.querySelector('.leaflet-roads-pane img'), cover: !!document.querySelector('.cover-edge'), hint: h.hidden ? '' : h.textContent, y: Math.round(r.top), x: Math.round(r.left), r: Math.round(r.right) }; });
+    check('roads and the forecast-area edge are drawn', mapx.roads && mapx.cover, JSON.stringify(mapx));
+    check('the aurora line off the map is pointed to, clear of the chips', /Aurora (line|reaches)/.test(mapx.hint) && mapx.y >= g.layers.b && mapx.x >= 0 && mapx.r <= W, JSON.stringify(mapx));
+    check('fresh data is not flagged as old', await page.evaluate(() => AA.UI.stale() === null && !document.querySelector('#live').classList.contains('stale')));
   }
 
   if (phone && (SUITE === 'all' || SUITE === 'sheet')) {
@@ -216,6 +232,27 @@ const check = (name, ok, detail = '') => { results.push({ name, ok: !!ok, detail
     await tap(c2.x + c2.w / 2, c2.y + c2.h / 2);
     await sleep(400);
     check('close button dismisses the place card', await page.evaluate(() => document.querySelector('#inspector').hidden && !document.querySelector('#panel').classList.contains('inspecting')));
+    // the place card gives the drive from home, not just the straight line (needs the routing service)
+    await tap(110, Math.round((lay.b + tl.y) / 2));
+    await page.waitForFunction(() => AA.state.inspect && AA.state.inspect.driveDone, null, { timeout: 25000 }).catch(() => {});
+    const from = await page.evaluate(() => { const r = [...document.querySelectorAll('.ins-row')].find((x) => /From home/.test(x.textContent)); return r ? r.textContent : ''; });
+    check('place card shows the drive from home', /drive/.test(from) && /by road/.test(from), from.slice(0, 120));
+    const foot = await page.evaluate(() => { const r = [...document.querySelectorAll('.ins-row')].find((x) => /On foot/.test(x.textContent)); return r ? r.textContent : ''; });
+    check('place card says whether it is a drive-up, a short walk or a hike', /Drive-up|Short walk|Hike/.test(foot), foot.slice(0, 80));
+    await page.evaluate(() => AA.app.closeInspector());
+    // with the sheet down at its bar, a map tap keeps the map: the bar names the place, a tap on it opens the card
+    await page.evaluate(() => AA.UI.sheet.snapTo('peek', { animate: false }));
+    await sleep(400);
+    const tlP = await rect('#timeline');
+    await tap(110, Math.round((lay.b + tlP.y) / 2));
+    await sleep(900);
+    const pk = await page.evaluate(() => { const h = document.querySelector('#inspector h3'); const r = h ? h.getBoundingClientRect() : null; return { snap: AA.UI.sheet.snap, open: !!AA.state.inspect, title: r ? { y: Math.round(r.top), b: Math.round(r.bottom) } : null }; });
+    await shot('05b-place-at-peek');
+    check('a map tap at the tab bar keeps the sheet down and shows the place name on the bar', pk.snap === 'peek' && pk.open && pk.title && pk.title.b <= H, JSON.stringify(pk));
+    await tap(120, pk.title ? Math.round((pk.title.y + pk.title.b) / 2) : H - 30);
+    await sleep(500);
+    check('tapping the place name opens the card', (await sheet()).snap === 'half');
+    await page.evaluate(() => AA.app.closeInspector());
   }
 
   if (phone && (SUITE === 'all' || SUITE === 'chrome')) {
@@ -261,6 +298,13 @@ const check = (name, ok, detail = '') => { results.push({ name, ok: !!ok, detail
     check('layer chip toggles', await page.evaluate(() => AA.state.settings.layers.clouds === true));
     await tap(chip.x + chip.w / 2, chip.y + chip.h / 2);
     await sleep(200);
+    // the base map button steps through the three maps
+    const base0 = await page.evaluate(() => AA.state.settings.base);
+    const bc = await rect('#baseCycle');
+    await tap(bc.x + bc.w / 2, bc.y + bc.h / 2);
+    const base1 = await page.evaluate(() => AA.state.settings.base);
+    await page.evaluate((b) => { while (AA.state.settings.base !== b) document.querySelector('#baseCycle').click(); document.querySelectorAll('.toast').forEach((t) => t.remove()); }, base0);
+    check('base map button changes the base map', base1 !== base0, `${base0} -> ${base1}`);
     // the chip row scrolls sideways
     const lay2 = await rect('#layers');
     await drag(W - 60, lay2.y + lay2.h / 2, 40, lay2.y + lay2.h / 2, { steps: 8 });
@@ -274,6 +318,19 @@ const check = (name, ok, detail = '') => { results.push({ name, ok: !!ok, detail
     check('dragging the timeline scrubs the forecast', !tm.live && tm.ahead > 10, JSON.stringify(tm));
     await shot('08-scrubbed');
     await page.evaluate(() => document.querySelector('#tlNow').click());
+    // ---------- an empty map says what is failing ----------
+    const whyDay = await page.evaluate(async () => {
+      const d = new Date(); d.setHours(13, 0, 0, 0);
+      let t = d.getTime(); if (t < Date.now() + 3600e3) t += 86400e3;
+      AA.app.setTime(t, { live: false });
+      await new Promise((r) => setTimeout(r, 700));
+      const w = AA.app.mapWhy(true), strip = document.querySelector('#keyStrip').textContent;
+      document.querySelector('#tlNow').click();
+      await new Promise((r) => setTimeout(r, 700));
+      return { none: w.none, reason: w.reason, strip, checks: w.checks.map((c) => `${c.k}:${c.ok}`).join(' ') };
+    });
+    check('an empty map says what is failing (daylight)', whyDay.none && /Daylight/.test(whyDay.reason) && /No good sky here: .*Daylight/.test(whyDay.strip), JSON.stringify(whyDay));
+    const ks2 = await rect('#legend'), tl2 = await rect('#timeline'), ctl2 = await rect('.mapctl');
     // ---------- live strip shortcut ----------
     const live = await rect('#live');
     await tap(live.x + 40, live.y + live.h / 2);
@@ -309,19 +366,16 @@ const check = (name, ok, detail = '') => { results.push({ name, ok: !!ok, detail
     check('the planned areas A, B, C land in the visible map', pins2.length > 0 && pins2.every(Boolean), JSON.stringify(pins2));
     await shot('11-plan-night-map');
     await page.evaluate(() => AA.app.clearPlan());
-    // ---------- journal form: fields are 16px and the sheet opens for typing ----------
-    await page.evaluate(() => { AA.UI.setTab('log'); AA.UI.sheet.snapTo('half', { animate: false }); document.querySelector('#logNewBtn').click(); });
-    await sleep(600);
-    const form = await page.evaluate(() => ({ snap: AA.UI.sheet.snap, fs: [...document.querySelectorAll('#logForm input:not([type=checkbox]), #logForm textarea')].map((e) => parseFloat(getComputedStyle(e).fontSize)), wide: [...document.querySelectorAll('#logForm input:not([type=checkbox]), #logForm textarea')].every((e) => e.getBoundingClientRect().right <= innerWidth) }));
-    await shot('12-journal-form');
-    check('journal form opens the sheet and uses 16px fields', form.snap === 'full' && form.fs.every((f) => f >= 16) && form.wide, JSON.stringify(form));
-    await page.evaluate(() => { document.querySelector('#lgCancel').click(); AA.UI.setTab('tonight'); AA.UI.sheet.snapTo('half', { animate: false }); });
+    await page.evaluate(() => { AA.UI.setTab('tonight'); AA.UI.sheet.snapTo('half', { animate: false }); });
+    check('three tabs: forecast, spots, space', await page.evaluate(() => [...document.querySelectorAll('.tab-btn')].map((b) => b.dataset.tab).join() === 'tonight,spots,space'));
     // ---------- settings modal fits ----------
     await page.evaluate(() => document.querySelector('#settingsBtn').click());
     await sleep(500);
     const mc = await rect('.modal-card');
     await shot('13-settings');
     check('settings fits the screen', mc.x >= 0 && mc.r <= W && mc.y >= 0 && mc.b <= H, JSON.stringify(mc));
+    const taste = await page.evaluate(() => { const S = AA.Sky, at = () => +S.siteAdj(0.41).toFixed(3), out = { std: at() }; for (const k of ['strict', 'easy', 'std']) { document.querySelector(`[data-taste="${k}"]`).click(); out[k + '2'] = at(); } return out; });
+    check('"how dark is dark enough" bends the darkness scale both ways', taste.strict2 < taste.std && taste.easy2 > taste.std && taste.std2 === taste.std, JSON.stringify(taste));
     await page.evaluate(() => AA.UI.closeModal());
   }
 
@@ -347,7 +401,10 @@ const check = (name, ok, detail = '') => { results.push({ name, ok: !!ok, detail
     check('map key names stargazing and aurora', /Stargazing/.test(names) && /Aurora/.test(names), names.slice(0, 80));
     await page.evaluate(() => document.querySelector('#legendBtn').click());
     await sleep(300);
-    const mx = r.panel.r + 70, my = Math.round((r.top.b + r.tl.y) / 2); // clear of the legend and the layer buttons
+    // a bare bit of map: clear of the key (taller now that it lists what gold needs), the hint and the layer buttons
+    const bare = await page.evaluate(([x0, y0, y1]) => { for (let y = y1 - 30; y > y0 + 60; y -= 20) for (let x = x0 + 40; x < innerWidth - 80; x += 20) { const e = document.elementFromPoint(x, y); if (e && e.closest('#map') && !e.closest('.leaflet-marker-icon')) return { x, y }; } return null; }, [r.panel.r, r.top.b, r.tl.y]);
+    check('there is bare map to tap', !!bare, JSON.stringify(bare));
+    const mx = bare ? bare.x : r.panel.r + 70, my = bare ? bare.y : Math.round((r.top.b + r.tl.y) / 2);
     await tap(mx, my);
     await sleep(1800);
     const ins = await rect('#inspector'), close = await rect('#insClose');

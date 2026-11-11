@@ -16,13 +16,12 @@
     units: /^en(-US|-LR|-MM)?$/i.test(lang) ? 'imperial' : 'metric',
     mode: 'auto', radiusKm: 120,
     layers: { best: true, aurora: true, clouds: false, lp: false, spots: true },
-    base: 'night', alerts: false, alertThreshold: 10, calm: false, nightVision: false, lpOpacity: 0.7,
+    base: 'night', alerts: false, alertThreshold: 10, calm: false, nightVision: false, lpOpacity: 0.7, lpTaste: 'std',
   };
   const savedSettings = U.store.get('aa.settings', {}) || {};
   const state = (AA.state = {
     home: U.store.get('aa.home', null),
     spots: U.store.get('aa.spots', []) || [],
-    log: U.store.get('aa.log', []) || [],
     suggestions: U.store.get('aa.sug', []) || [],
     settings: { ...defaults, ...savedSettings, layers: { ...defaults.layers, ...(savedSettings.layers || {}) } },
     selected: null,
@@ -31,9 +30,13 @@
     picking: false,
     inspect: null,
   });
+  // 'log' is the journal this app once had: nothing reads it now, but Clear saved data still removes it
   const KEYS = { home: 'aa.home', spots: 'aa.spots', log: 'aa.log', settings: 'aa.settings', sug: 'aa.sug' };
   const save = (k) => U.store.set(KEYS[k], k === 'sug' ? state.suggestions : state[k]);
   const calm = () => state.settings.calm || window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // How much town glow counts against a place (see Sky.siteAdj)
+  const TASTE = { easy: 0.55, std: 1, strict: 1.7 };
+  Sky.lpGamma = TASTE[state.settings.lpTaste] || 1;
 
   // ---------- Map ----------
   const start = state.home ? [state.home.lat, state.home.lon] : [47.35, -120.6];
@@ -43,7 +46,7 @@
   }).setView(start, state.home ? 7.5 : 6.5);
   app.map = map;
   map.attributionControl.setPrefix('<a href="https://leafletjs.com" target="_blank" rel="noopener">Leaflet</a>');
-  for (const [name, z] of [['lpPane', 250], ['labelsPane', 380], ['linesPane', 390]]) map.createPane(name).style.zIndex = z;
+  for (const [name, z] of [['lpPane', 250], ['roadsPane', 370], ['labelsPane', 380], ['linesPane', 390]]) map.createPane(name).style.zIndex = z;
   const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services';
   const ESRI_ATTR = 'Tiles &copy; Esri, HERE, Garmin, &copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> contributors';
   const bases = {
@@ -56,6 +59,8 @@
     pane: 'lpPane', tileSize: 1024, zoomOffset: -2, minZoom: 2, maxNativeZoom: 8, maxZoom: 19, opacity: state.settings.lpOpacity, crossOrigin: 'anonymous',
     attribution: 'Light pollution &copy; <a href="https://djlorenz.github.io/astronomy/lp/" target="_blank" rel="noopener">D. Lorenz</a> · Aurora &amp; Kp: <a href="https://www.swpc.noaa.gov" target="_blank" rel="noopener">NOAA SWPC</a> · Weather: <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a>',
   });
+  // Highways and main roads, drawn dim over everything: the answer is always "drive there", so show the way
+  L.tileLayer(`${ESRI}/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}`, { minZoom: 6, maxNativeZoom: 16, maxZoom: 19, pane: 'roadsPane', crossOrigin: true, className: 'base-roads' }).addTo(map);
   const fx = FX.createMapLayer(map);
   const particles = FX.createParticles(map, { max: coarse ? 130 : 240, dpr: coarse ? 1.5 : 2 });
   const sw = FX.createSolarWind($('#swCanvas'));
@@ -63,6 +68,7 @@
   const homeLayer = L.layerGroup().addTo(map);
   const spotLayer = L.layerGroup().addTo(map);
   const sugLayer = L.layerGroup().addTo(map);
+  const meLayer = L.layerGroup().addTo(map);
   let pickMarker = null, radiusRing = null;
   let fxDirty = true, mapMoving = false;
   map.on('movestart zoomstart', () => { mapMoving = true; });
@@ -74,7 +80,8 @@
     if (isMobile()) {
       // the sheet (counted at half height at most: a full sheet hides the map anyway) plus the timeline riding on it
       const sh = UI.sheet, eff = Math.min(sh.target || sh.heights.half, sh.heights.half);
-      return { l: 0, r: 0, t: $('#layers').getBoundingClientRect().bottom + 4, b: eff + ($('#timeline').offsetHeight || 64) + 14 };
+      // (the map buttons stand down the right edge, the key strip lies along the bottom)
+      return { l: 0, r: 54, t: $('#layers').getBoundingClientRect().bottom + 4, b: eff + ($('#timeline').offsetHeight || 64) + 14 + 40 };
     }
     const panel = $('#panel').getBoundingClientRect(), rc = $('.rightcol').getBoundingClientRect();
     const tlTop = window.innerHeight - $('#timeline').getBoundingClientRect().top;
@@ -118,7 +125,7 @@
     });
     m.on('click', () => {
       app.selectPlace(null);
-      app.inspect(state.home.lat, state.home.lon, { kind: 'home', kindLabel: 'Home base', title: state.home.name, name: state.home.name });
+      app.inspect(state.home.lat, state.home.lon, { quiet: true, kind: 'home', kindLabel: 'Home base', title: state.home.name, name: state.home.name });
     });
     m.on('dragend', () => {
       const ll = m.getLatLng();
@@ -130,12 +137,15 @@
     });
     homeLayer.addLayer(m);
   }
+  // a pin with an amber dot is a walk from the road, not a drive-up
+  const isHike = (p) => { const dv = p.drive || app.driveFor(p); return !!dv && dv.min != null && dv.snap > 0.4; };
+  app.drawSpots = () => drawSpots();
   function drawSpots() {
     spotLayer.clearLayers();
     sugLayer.clearLayers();
     if (!state.settings.layers.spots) return;
     for (const p of state.spots) {
-      const m = L.marker([p.lat, p.lon], { icon: divIcon(`<div class="mk mk-spot">${U.icon('star')}</div>`, 28), title: p.name, riseOnHover: true });
+      const m = L.marker([p.lat, p.lon], { icon: divIcon(`<div class="mk mk-spot ${isHike(p) ? 'hike' : ''}">${U.icon('star')}</div>`, 28), title: isHike(p) ? `${p.name} (hike in)` : p.name, riseOnHover: true });
       m.on('click', () => app.focusSpot({ kind: 'spot', lat: p.lat, lon: p.lon, name: p.name, id: p.id }, { fly: false }));
       spotLayer.addLayer(m);
     }
@@ -143,7 +153,7 @@
       if (state.spots.some((p) => p.srcId === g.id)) return;
       const tn = app.tonightFor(g);
       const label = g.name || (D.KINDS[g.kind] || D.KINDS.place).label;
-      const m = L.marker([g.lat, g.lon], { icon: divIcon(`<div class="mk mk-sug ${tn && tn.clearHours === 0 ? 'dim' : ''}">${i + 1}</div>`, 26), title: label, riseOnHover: true });
+      const m = L.marker([g.lat, g.lon], { icon: divIcon(`<div class="mk mk-sug ${tn && tn.clearHours === 0 ? 'dim' : ''} ${isHike(g) ? 'hike' : ''}">${i + 1}</div>`, 26), title: isHike(g) ? `${label} (hike in)` : label, riseOnHover: true });
       m.on('click', () => app.focusSpot({ kind: 'sug', lat: g.lat, lon: g.lon, name: label, ref: g }, { fly: false }));
       sugLayer.addLayer(m);
     });
@@ -152,6 +162,39 @@
     if (pickMarker) pickMarker.remove();
     pickMarker = L.marker([lat, lon], { icon: divIcon('<div class="mk mk-pick"></div>', 22), interactive: false, keyboard: false }).addTo(map);
   }
+  // ---------- Where am I ----------
+  // A dot for where the phone is, and the place card for that spot: out in the field, home is the wrong place to ask about
+  let locating = false;
+  function drawMe() {
+    meLayer.clearLayers();
+    const me = state.me;
+    if (!me) return;
+    if (me.acc && me.acc > 30 && me.acc < 20000) L.circle([me.lat, me.lon], { radius: me.acc, renderer: linesRenderer, className: 'me-ring', interactive: false }).addTo(meLayer);
+    const m = L.marker([me.lat, me.lon], { icon: divIcon('<div class="mk mk-me"></div>', 20), title: 'You are here', zIndexOffset: 1100, keyboard: false });
+    m.on('click', () => app.inspect(me.lat, me.lon, { quiet: true, kind: 'me', kindLabel: 'You are here' }));
+    meLayer.addLayer(m);
+  }
+  app.locate = () => {
+    if (!navigator.geolocation) { UI.toast('This browser cannot share its location.'); return; }
+    if (locating) return;
+    locating = true;
+    const btn = $('#locateBtn');
+    btn.classList.add('busy');
+    const done = () => { locating = false; btn.classList.remove('busy'); };
+    navigator.geolocation.getCurrentPosition((pos) => {
+      done();
+      const lat = +pos.coords.latitude.toFixed(5), lon = +U.wrapLon(pos.coords.longitude).toFixed(5);
+      state.me = { lat, lon, acc: pos.coords.accuracy, t: Date.now() };
+      drawMe();
+      if (isMobile()) UI.sheet.snapTo('half');
+      app.flyTo(lat, lon, Math.max(map.getZoom(), 9.5));
+      app.inspect(lat, lon, { noReveal: true, kind: 'me', kindLabel: 'You are here' });
+    }, (err) => {
+      done();
+      UI.toast(err && err.code === 1 ? 'Location is blocked for this site. Allow it in the browser settings to see where you are.' : 'Could not get a location fix. Try again under open sky.', { kind: 'error' });
+    }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
+  };
+
   function drawRadius() {
     if (radiusRing) { radiusRing.remove(); radiusRing = null; }
     if (UI.activeTab !== 'spots' || !state.home) return;
@@ -164,6 +207,25 @@
     if (reach) { reach.remove(); reachGlow.remove(); reach = reachGlow = null; }
     if (reachTip) { map.closeTooltip(reachTip); reachTip = null; }
     reachKp = null;
+    reachHint(null);
+  }
+  // The line is usually far off the top of the map. Say how far, and let a tap bring it into view.
+  let hintGo = null;
+  function reachHint(ll) {
+    const el = $('#reachHint');
+    if (!ll) { el.hidden = true; hintGo = null; return; }
+    const b = map.getBounds(), h = state.home;
+    const atHome = !!h && b.contains([h.lat, h.lon]);
+    const ref = atHome ? h : { lat: map.getCenter().lat, lon: U.wrapLon(map.getCenter().lng) };
+    let near = reachPts[0];
+    for (const p of reachPts) if (Math.abs(p[1] - ref.lon) < Math.abs(near[1] - ref.lon)) near = p;
+    const north = near[0] > ref.lat, km = Math.abs(near[0] - ref.lat) * 111.2, kp = (reachShown ?? reachKp).toFixed(1);
+    el.hidden = false;
+    el.innerHTML = north
+      ? `<i class="rh-arrow">↑</i><span>Aurora line <b>${U.fmtDist(km)} north</b> of ${atHome ? 'home' : 'here'}</span><small>Kp ${kp}</small>`
+      : `<i class="rh-arrow">↓</i><span>Aurora reaches <b>${U.fmtDist(km)} south</b> of ${atHome ? 'home' : 'here'}</span><small>Kp ${kp}</small>`;
+    el.setAttribute('aria-label', `${el.textContent}. Show it on the map`);
+    hintGo = () => app.flyToBounds(L.latLngBounds([[ref.lat, ref.lon + (map.getCenter().lng - U.wrapLon(map.getCenter().lng))], [near[0], ll.lng]]));
   }
   function drawReach() {
     const kp = state.plan ? state.plan.kp : D.kpAt(state.time); // a planned night draws its own Kp
@@ -188,7 +250,8 @@
     for (const p of reachPts) if (Math.abs(p[1] - cl) < Math.abs(best[1] - cl)) best = p;
     const ll = L.latLng(best[0], best[1] + (c.lng - cl));
     const html = `Aurora likely north of this line · Kp ${(reachShown ?? reachKp).toFixed(1)}`;
-    if (!map.getBounds().pad(-0.12).contains(ll)) { if (reachTip) { map.closeTooltip(reachTip); reachTip = null; } return; }
+    if (!map.getBounds().pad(-0.12).contains(ll)) { if (reachTip) { map.closeTooltip(reachTip); reachTip = null; } reachHint(ll); return; }
+    reachHint(null);
     if (!reachTip) {
       reachTip = L.tooltip({ permanent: true, direction: 'top', className: 'reach-tip', offset: [0, -6], interactive: false }).setLatLng(ll).setContent(html);
       map.openTooltip(reachTip);
@@ -229,6 +292,29 @@
     if (cur && pkey(cur) === k) { UI.renderTonight(); UI.rebuildTimeline(); }
     if (home && pkey(home) === k) UI.renderLive();
   }
+  // ---------- Drive times from home ----------
+  let driveFailAt = 0;
+  const driveBusy = new Set();
+  app.driveFor = (p) => (state.home ? D.driveCached(state.home, p) : undefined);
+  // Fetch the drives that are not known yet. Resolves true when something new arrived.
+  app.loadDrives = async (pts, persist = true) => {
+    const home = state.home;
+    if (!home || Date.now() - driveFailAt < 60e3) return false;
+    const need = pts.filter((p) => D.driveCached(home, p) === undefined && !driveBusy.has(pkey(p)));
+    if (!need.length) return false;
+    need.forEach((p) => driveBusy.add(pkey(p)));
+    try { await D.driveTimes(home, need, { persist }); return true; }
+    catch (e) { driveFailAt = Date.now(); console.warn('Drive times failed', e); return false; }
+    finally { need.forEach((p) => driveBusy.delete(pkey(p))); }
+  };
+  // How much a drive counts against a place: gentle inside the chosen radius (driven at about 60 km/h, so
+  // R km is R minutes), steep beyond it. The long way round a mountain range or the water sinks a spot.
+  const driveF = (min, R) => U.clamp(1 - 0.35 * Math.pow(min / R, 1.5), 0.15, 1);
+  // A place well off the road is a hike in the dark with the gear, however short the drive
+  const walkF = (snapKm) => (snapKm <= 0.4 ? 1 : snapKm <= 1.5 ? 0.8 : 0.45);
+  // Both together, for a drive answer (or none: no road route at all)
+  const reachF = (dv, R) => (!dv || dv.min == null ? 0.15 : driveF(dv.min, R) * walkF(dv.snap));
+
   app.tonightFor = (g) => {
     const grid = D.grid;
     const ref = state.home || g;
@@ -278,8 +364,10 @@
     if (!ctx.kind || ctx.kind === 'pin') showPick(lat, lon); else if (pickMarker) { pickMarker.remove(); pickMarker = null; }
     UI.renderInspector(d);
     if (isMobile()) {
-      // on a phone the place card lives in the sheet: bring it to half height and keep the pin in view above it
-      if (!UI.sheet.is('half')) UI.sheet.snapTo('half');
+      // on a phone the place card lives in the sheet: bring it to half height and keep the pin in view above it.
+      // A tap on the map while the sheet is down to its bar leaves it there: the bar shows the place's name,
+      // and a tap or a pull on it opens the card.
+      if (!UI.sheet.is('half') && !(ctx.quiet && UI.sheet.is('peek'))) UI.sheet.snapTo('half');
       $('#inspector').scrollTop = 0;
       if (!ctx.noReveal) setTimeout(() => revealOnMap(lat, lon), 40);
     }
@@ -287,6 +375,7 @@
     if (d.zone === undefined) D.lpZone(lat, lon).then((z) => { d.zone = z; upd(); });
     D.pointWx(lat, lon).then((wx) => { d.wx = wx; upd(); }).catch((e) => { d.wxErr = e; upd(); });
     if (!ctx.title && !ctx.name) D.placeName(lat, lon).then((n) => { if (n) { d.title = d.name = `Near ${n}`; upd(); } });
+    if (state.home && U.distKm(state.home, d) > 1) app.loadDrives([d], false).then(() => { d.driveDone = true; upd(); });
   };
   app.closeInspector = ({ keepPin = false } = {}) => {
     state.inspect = null;
@@ -367,7 +456,7 @@
     if (!state.home) { app.showWelcome(); return; }
     finding = true;
     $('#findBtn').disabled = true;
-    const steps = ['Mapping the darkest, clearest ground around home', 'Finding real places to stand there (OpenStreetMap)', 'Checking the terrain toward the aurora', "Ranking for tonight's sky"];
+    const steps = ['Mapping the darkest, clearest ground around home', 'Finding real places to stand there (OpenStreetMap)', 'Checking the drive from home', 'Checking the terrain toward the aurora', "Ranking for tonight's sky"];
     const R = state.settings.radiusKm, home = state.home, mode = app.mode();
     try {
       UI.finderStatus(steps, 0);
@@ -409,49 +498,66 @@
       if (!seeds.length) { UI.finderStatus(null); UI.toast('No dark ground found in that radius. Try a wider one.'); return; }
       // 2. nearest real places around each golden area
       UI.finderStatus(steps, 1);
-      const cands = [];
+      // (the three most promising in each area go forward, so the drive can decide between them)
+      const pool = [];
       let answered = 0;
-      for (const sd of seeds) {
+      for (const [si, sd] of seeds.entries()) {
         let places = [];
         try { places = await D.nearbyPlaces(sd.lat, sd.lon, 12); answered++; } catch (e) { console.warn('Place search failed', e); }
-        let best = null;
+        const scored = [];
         for (const p of places) {
           const s = D.siteAt(p.lat, p.lon);
           if (s == null) continue;
-          const v = Math.pow(s, 1.5) * (D.KINDS[p.kind] || D.KINDS.place).w * (p.name ? 1 : 0.9) * Math.exp(-U.distKm(sd, p) / 10);
-          if (!best || v > best.v) best = { ...p, v, site: s };
+          scored.push({ ...p, v: Math.pow(s, 1.5) * (D.KINDS[p.kind] || D.KINDS.place).w * (p.name ? 1 : 0.9) * Math.exp(-U.distKm(sd, p) / 10), site: s, seed: si });
         }
-        const pick = best || { id: `area${sd.lat.toFixed(3)}${sd.lon.toFixed(3)}`, lat: +sd.lat.toFixed(4), lon: +sd.lon.toFixed(4), name: null, kind: 'area', site: sd.site };
-        if (!cands.some((c) => c.id === pick.id || U.distKm(c, pick) < 2)) cands.push(pick);
+        scored.sort((a, b) => b.v - a.v);
+        if (scored.length) pool.push(...scored.slice(0, 3));
+        else pool.push({ id: `area${sd.lat.toFixed(3)}${sd.lon.toFixed(3)}`, lat: +sd.lat.toFixed(4), lon: +sd.lon.toFixed(4), name: null, kind: 'area', site: sd.site, v: Math.pow(sd.site, 1.5) * D.KINDS.area.w, seed: si });
         await U.sleep(120); // be gentle with the free place-search service
       }
       if (!answered) UI.toast('The place search is not answering, so these are dark areas without a named spot. Check access on the satellite view.', { timeout: 7000 });
-      for (const c of cands) {
+      // 3. the drive from home, on real roads, and how far each place is from one. Without an answer the
+      // straight-line distance stands in.
+      UI.finderStatus(steps, 2);
+      let drv = null;
+      try { drv = await D.driveTimes(home, pool, { persist: true }); } catch (e) { console.warn('Drive times failed', e); }
+      pool.forEach((c, i) => {
         c.dist = U.distKm(home, c);
+        c.drive = drv ? drv[i] : null;
+        c.distQ = c.drive ? reachF(c.drive, R) : distF(c.dist);
+      });
+      if (!drv) UI.toast('The routing service did not answer, so distances are straight lines this time.', { timeout: 6000 });
+      // one place per dark area: the best once the drive and the walk from the road are counted
+      const cands = [];
+      for (let si = 0; si < seeds.length; si++) {
+        const best = pool.filter((c) => c.seed === si).sort((a, b) => b.v * b.distQ - a.v * a.distQ)[0];
+        if (best && !cands.some((c) => c.id === best.id || U.distKm(c, best) < 2)) cands.push(best);
+      }
+      for (const c of cands) {
         c.zone = await D.lpZone(c.lat, c.lon);
         if (c.kind === 'area') { const n = await D.placeName(c.lat, c.lon); c.name = n ? `Dark area near ${n}` : 'Dark area'; }
       }
-      // 3. terrain toward the aurora
-      UI.finderStatus(steps, 2);
+      // 4. terrain toward the aurora
+      UI.finderStatus(steps, 3);
       try {
-        // terrain check for the 12 darkest candidates (keeps the free elevation quota in hand)
-        cands.sort((a, b) => Math.pow(b.site, 1.5) * distF(b.dist) - Math.pow(a.site, 1.5) * distF(a.dist));
+        // terrain check for the 12 best candidates (keeps the free elevation quota in hand)
+        cands.sort((a, b) => Math.pow(b.site, 1.5) * b.distQ - Math.pow(a.site, 1.5) * a.distQ);
         const checkList = cands.slice(0, 12);
         const hz = await D.horizon(checkList);
         checkList.forEach((p, i) => { p.hz = { block: hz[i].block, worst: hz[i].worst, elev: hz[i].elev }; });
       } catch (e) { console.warn('Horizon check failed', e); }
-      // 4. rank
-      UI.finderStatus(steps, 3);
+      // 5. rank
+      UI.finderStatus(steps, 4);
       for (const p of cands) {
         const b = p.hz ? p.hz.block : 3;
         const hzF = b <= 2 ? 1 : b <= 4 ? 0.9 : b <= 7 ? 0.74 : b <= 11 ? 0.55 : 0.35;
-        const s = p.zone != null ? Sky.SITE_STARS[p.zone] : p.site;
-        p.quality = Math.pow(s, 1.5) * distF(p.dist) * (D.KINDS[p.kind] || D.KINDS.place).w * (mode === 'stars' ? Math.sqrt(hzF) : hzF);
+        const s = p.zone != null ? Sky.siteAdj(Sky.SITE_STARS[p.zone]) : p.site;
+        p.quality = Math.pow(s, 1.5) * p.distQ * (D.KINDS[p.kind] || D.KINDS.place).w * (mode === 'stars' ? Math.sqrt(hzF) : hzF);
         p.tonight = tonightAt(p.lat, p.lon);
         p.score = p.quality * (0.4 + 0.6 * (p.tonight && hours.length ? p.tonight.clearHours / hours.length : 0.5));
       }
       cands.sort((a, b) => b.score - a.score);
-      state.suggestions = cands.slice(0, 10).map(({ id, lat, lon, name, kind, dist, zone, hz, tonight, score, quality }) => ({ id, lat, lon, name, kind, dist, zone, hz, tonight, score, quality, found: Date.now() }));
+      state.suggestions = cands.slice(0, 10).map(({ id, lat, lon, name, kind, dist, drive, zone, hz, tonight, score, quality }) => ({ id, lat, lon, name, kind, dist, drive, zone, hz, tonight, score, quality, found: Date.now() }));
       save('sug');
       UI.finderStatus(null);
       drawSpots();
@@ -482,7 +588,7 @@
     for (const s of state.spots.slice(0, 6)) pts.push({ lat: s.lat, lon: s.lon, name: s.name });
     for (const g of state.suggestions.slice(0, 4)) pts.push({ lat: g.lat, lon: g.lon, name: g.name || (D.KINDS[g.kind] || D.KINDS.place).label });
     for (const [f, step] of [[0.5, 90], [1, 45]]) {
-      for (let b = 0; b < 360; b += step) { const p = U.dest(h.lat, h.lon, b, R * f); pts.push({ ...p, name: `${U.fmtDist(R * f)} ${U.compass(b)} of home` }); }
+      for (let b = 0; b < 360; b += step) { const p = U.dest(h.lat, h.lon, b, R * f); pts.push({ ...p, ring: true, brg: b, name: `${U.fmtDist(R * f)} ${U.compass(b)} of home` }); }
     }
     return pts.slice(0, 24);
   }
@@ -532,8 +638,25 @@
   }
   async function refreshNights() {
     if (!state.home) return;
-    const pts = nightPoints();
-    const key = `nights:${state.home.lat.toFixed(2)},${state.home.lon.toFixed(2)}:${state.settings.radiusKm}:${pts.map((p) => p.lat.toFixed(1) + p.lon.toFixed(1)).join('').length}:${state.spots.length}`;
+    let pts = nightPoints();
+    // The ring points stand in for "somewhere out that way". Keep the ones a car can reach in reasonable time
+    // (not open water, not the far side of a mountain range) and name them by the drive.
+    try {
+      const R = state.settings.radiusKm;
+      const dr = await D.driveTimes(state.home, pts.slice(1), { persist: true });
+      pts = pts.filter((p, i) => {
+        if (i === 0 || !p.ring) return true;
+        const d = dr[i - 1];
+        if (!d || d.min == null || d.snap > 4 || d.min > R * 1.5) return false;
+        p.name = `${U.fmtDrive(d.min)} ${U.compass(p.brg)} of home`;
+        return true;
+      });
+    } catch (e) { console.warn('Drive times failed', e); }
+    const sig = pts.map((p) => p.lat.toFixed(2) + p.lon.toFixed(2)).join('');
+    let hsh = 0;
+    for (let i = 0; i < sig.length; i++) hsh = (hsh * 31 + sig.charCodeAt(i)) | 0;
+    const key = `nights2:${hsh}`;
+    nights.pts = pts;
     nights.loading = true;
     let cl = null;
     try { cl = await D.loadNightClouds(pts, key); } catch (e) { console.warn('Night cloud forecast failed', e); }
@@ -544,10 +667,10 @@
     UI.renderNights();
   }
   app.refreshNights = () => refreshNights();
-  app.recomputeNights = () => { if (state.home && nights.list.length) { nights.list = computeNights(nightPoints(), nights.cl); UI.renderNights(); } };
+  app.recomputeNights = () => { if (state.home && nights.list.length) { nights.list = computeNights(nights.pts || nightPoints(), nights.cl); UI.renderNights(); } };
   // Plan a night: Best sky for that night's Kp and moon; beyond the cloud forecast it assumes clear skies
   const planLayer = L.layerGroup().addTo(map);
-  function planAreas(n) {
+  function planAreas(n, count = 3) {
     const h = state.home, R = state.settings.radiusKm;
     if (!D.site) return [];
     const aur = n.lvl && n.lvl.s >= 0.45;
@@ -565,7 +688,7 @@
     }
     cells.sort((a, b) => b.v - a.v);
     const out = [];
-    for (const c of cells) { if (out.length >= 3) break; if (out.some((o) => U.distKm(o, c) < 25)) continue; out.push({ ...c, zone: null, name: null }); }
+    for (const c of cells) { if (out.length >= count) break; if (out.some((o) => U.distKm(o, c) < 25)) continue; out.push({ ...c, zone: null, name: null }); }
     return out;
   }
   function drawPlan() {
@@ -578,12 +701,36 @@
       planLayer.addLayer(m);
     });
   }
+  let planTok = 0;
   app.planNight = async (n) => {
     if (!state.home) { app.showWelcome(); return; }
+    const tok = ++planTok;
     if (!D.site && D.grid) { try { await D.buildSite(D.grid); } catch (e) { /* map still works */ } }
+    // The eight darkest areas, then the three best once the drive and the walk from the road are counted.
+    // If the routing service is slow, the darkest three go up as they are.
+    let areas = planAreas(n, 8);
+    try {
+      const dr = await Promise.race([D.driveTimes(state.home, areas), U.sleep(6000).then(() => null)]);
+      if (dr) {
+        areas.forEach((a, i) => {
+          const d = dr[i];
+          a.drive = d;
+          // dark ground is rarely on a road: put the pin where the drive ends, if it is still dark there
+          const s2 = d && d.min != null && d.at && d.snap > 0.3 && d.snap < 8 ? D.siteAt(d.at[0], d.at[1]) : null;
+          if (s2 != null && s2 >= a.site * 0.8) {
+            a.v *= Math.pow(s2 / a.site, 1.5);
+            a.lat = d.at[0]; a.lon = d.at[1]; a.site = s2; a.d = U.distKm(state.home, a);
+            a.drive = { ...d, snap: 0 };
+          }
+          a.v2 = a.v * reachF(a.drive, state.settings.radiusKm);
+        });
+        areas.sort((a, b) => b.v2 - a.v2);
+      }
+    } catch (e) { console.warn('Drive times failed', e); }
+    if (tok !== planTok) return; // another night was tapped meanwhile
+    areas = areas.filter((a, i) => !areas.slice(0, i).some((o) => U.distKm(o, a) < 15)).slice(0, 3);
     const inRange = !!D.grid && n.to < D.grid.t[D.grid.t.length - 1];
-    state.plan = { ...n, mid: (n.from + n.to) / 2, assume: !inRange, areas: [] };
-    state.plan.areas = planAreas(n);
+    state.plan = { ...n, mid: (n.from + n.to) / 2, assume: !inRange, areas };
     if (!state.settings.layers.best) { state.settings.layers.best = true; save('settings'); applyLayers(); }
     if (inRange) app.setTime(U.floorHour(n.from) + 1.5 * U.HOUR, { live: false, plan: true }); else { updateBest(); drawReach(); refreshKey(); }
     drawPlan();
@@ -596,12 +743,13 @@
       b.extend([state.home.lat, state.home.lon]);
       app.flyToBounds(b);
     }
-    for (const a of state.plan.areas) {
+    for (const a of areas) {
       D.lpZone(a.lat, a.lon).then((z) => { a.zone = z; UI.renderNights(); });
       D.placeName(a.lat, a.lon).then((nm) => { a.name = nm ? `Dark ground near ${nm}` : 'Dark ground'; drawPlan(); UI.renderNights(); });
     }
   };
   app.clearPlan = (back = true) => {
+    planTok++;
     if (!state.plan) return;
     state.plan = null;
     planLayer.clearLayers();
@@ -609,23 +757,36 @@
     if (back) app.setTime(Date.now(), { live: true }); else updateBest();
   };
 
-  // ---------- Journal ----------
-  app.addLog = (e) => { state.log.push(e); save('log'); UI.renderLog(); UI.toast('Saved to your journal.'); };
-  app.removeLog = (id) => {
-    const i = state.log.findIndex((x) => x.id === id);
-    if (i < 0) return;
-    const [x] = state.log.splice(i, 1);
-    save('log');
-    UI.renderLog();
-    UI.toast('Entry deleted.', { action: { label: 'Undo', run: () => { state.log.splice(i, 0, x); save('log'); UI.renderLog(); } } });
-  };
-  app.conditionsSnapshot = () => {
-    const p = app.place(), kp = D.kpNow(), s = D.swNow(), mi = Sky.moonIllum(Date.now());
-    let cc = null;
-    if (p) { const it = app.placeInfo(p); const w = it.wx ? D.wxAt(it.wx, U.floorHour(Date.now())) : null; cc = w ? w.cc : null; }
-    const cond = { kp, bz: s.bz, v: s.v, cc, moon: mi.fraction };
-    const text = [kp != null ? `Kp ${kp.toFixed(1)}` : null, s.bz != null ? `Bz ${s.bz.toFixed(1)}` : null, cc != null ? `${Math.round(cc)}% cloud` : null, `Moon ${Math.round(mi.fraction * 100)}%`].filter(Boolean).join(', ');
-    return { cond, text };
+  // A planned night as a calendar entry, with a reminder that afternoon to check the clouds
+  app.planIcs = () => {
+    const p = state.plan;
+    if (!p) return;
+    const z = (t) => new Date(t).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+    const esc = (s) => String(s).replace(/\\/g, '\\\\').replace(/([,;])/g, '\\$1').replace(/\n/g, '\\n');
+    const aur = p.kp != null && p.lvl && p.lvl.s >= 0.45;
+    const a = p.areas[0];
+    const desc = [
+      p.kp != null ? `Kp up to ${p.kp.toFixed(1)} (${p.kpSrc}). Home needs about ${p.need.toFixed(1)}.` : null,
+      `Moon ${Math.round(p.moon * 100)}% lit.`,
+      a ? `Darkest ground: ${a.name || 'see the map'} (${a.lat.toFixed(4)}, ${a.lon.toFixed(4)}).` : null,
+      'Check the clouds in Aurora Atlas that afternoon.',
+      SITE_URL,
+    ].filter(Boolean).join('\n');
+    const ics = [
+      'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Aurora Atlas//EN', 'BEGIN:VEVENT',
+      `UID:${U.uid()}@aurora-atlas`, `DTSTAMP:${z(Date.now())}`, `DTSTART:${z(p.from)}`, `DTEND:${z(p.to)}`,
+      `SUMMARY:${esc(aur ? `Aurora watch (Kp up to ${p.kp.toFixed(1)})` : 'Stargazing night')}`,
+      `DESCRIPTION:${esc(desc)}`,
+      a ? `GEO:${a.lat.toFixed(5)};${a.lon.toFixed(5)}` : null,
+      'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Check the sky forecast for tonight', 'TRIGGER:-PT4H', 'END:VALARM',
+      'END:VEVENT', 'END:VCALENDAR',
+    ].filter(Boolean).join('\r\n');
+    const url = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' }));
+    const link = U.el('a', { href: url, download: `sky-night-${U.fmtDate(p.from).replace(/\W+/g, '-').toLowerCase()}.ics` });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
   };
 
   // ---------- Time and playback ----------
@@ -660,6 +821,7 @@
       // which color families show: [gold stargazing, green aurora]. Auto (and a planned night) shows both.
       modeW: pl || state.settings.mode === 'auto' ? [1, 1] : state.settings.mode === 'stars' ? [1, 0] : [0, 1],
       assume: pl && pl.assume ? 1 : 0,
+      siteG: Sky.lpGamma, nv: state.settings.nightVision ? 1 : 0,
       // when planning a night the map answers "where": moonlight is the same everywhere, so the card covers it
       dark: pl ? [1, 1, 1, 1] : [Sky.darkFactor(sun, 'aurora'), Sky.darkFactor(sun, 'stars'), Sky.moonFactor(mp.alt, mi.fraction, 'aurora'), Sky.moonFactor(mp.alt, mi.fraction, 'stars')],
     });
@@ -702,6 +864,9 @@
       else if (map.hasLayer(layer)) layer.remove();
     }
     U.$$('.base-seg button').forEach((b) => b.setAttribute('aria-checked', String(b.dataset.base === state.settings.base)));
+    // phones get one button that steps through the base maps; it shows the one that is on
+    const use = $('#baseCycle use');
+    if (use) use.setAttribute('href', `#i-${{ night: 'moon', terrain: 'mountain', satellite: 'satellite' }[state.settings.base] || 'moon'}`);
   }
   function applyLayers() {
     const ly = state.settings.layers;
@@ -713,6 +878,7 @@
     updateBest();
     drawSpots();
     drawReach();
+    drawCover();
     UI.renderLegend();
     U.$$('.chip[data-layer]').forEach((b) => b.setAttribute('aria-pressed', String(!!ly[b.dataset.layer])));
   }
@@ -738,15 +904,72 @@
     }
     return { kp, need: h ? Sky.kpNeeded(Sky.magLat(h.lat, h.lon)) : null, inReach: best >= 0.3, oval, planned: !!pl };
   };
-  // Redraw the key only when what it says would change
-  function refreshKey() {
-    const i = app.keyInfo();
-    const sig = `${i.inReach}|${i.kp == null ? '' : i.kp.toFixed(1)}|${i.oval}|${i.planned}`;
+  // The gold is four things multiplied together: night, moon, clouds and dark ground. This checks each one
+  // over the part of the map on screen, so that when nothing is gold the key can say which one is failing.
+  let why = null, whyAt = -1e9;
+  app.mapWhy = (fresh) => {
+    const now = performance.now();
+    if (why && !fresh && now - whyAt < 300) return why;
+    whyAt = now;
+    const g = D.grid, pl = state.plan, t = pl ? pl.mid : state.time;
+    const o = (why = { ready: !!g && !!D.site && D.site.key === g.key, covered: false, none: false, reason: '', checks: null });
+    if (!o.ready) return o;
+    const ob = obstruction(), size = map.getSize(), guess = !!pl && pl.assume;
+    const tg = U.clamp(t, g.t[0], g.t[g.t.length - 1]);
+    let n = 0, minCc = 101, maxSite = 0, best = 0;
+    for (let i = 0; i < 9; i++) for (let j = 0; j < 9; j++) {
+      const ll = map.containerPointToLatLng([U.lerp(ob.l, size.x - ob.r, (i + 0.5) / 9), U.lerp(ob.t, size.y - ob.b, (j + 0.5) / 9)]);
+      const lat = ll.lat, lon = U.wrapLon(ll.lng);
+      const cl = D.gridAt(g, lat, lon, tg), s = D.siteAt(lat, lon);
+      if (!cl || s == null) continue;
+      n++;
+      const cc = guess ? 0 : cl.cc;
+      if (cc < minCc) minCc = cc;
+      if (s > maxSite) maxSite = s;
+      best = Math.max(best, (1 - cc / 100) * s);
+    }
+    o.covered = n > 0;
+    if (!n) { o.none = true; o.reason = 'Outside the forecast area around home'; return o; }
+    const c = map.getCenter();
+    const sun = Sky.sunAlt(t, c.lat, c.lng), mp = Sky.moonPos(t, c.lat, c.lng), mi = Sky.moonIllum(t);
+    // a planned night is drawn without the hour and the moon (the same everywhere), so they pass here too
+    const dark = pl ? 1 : Sky.darkFactor(sun, 'stars'), moon = pl ? 1 : Sky.moonFactor(mp.alt, mi.fraction, 'stars');
+    const lit = Math.round((pl ? pl.moon : mi.fraction) * 100);
+    o.checks = [
+      { k: 'Night', f: dark, ok: dark >= 0.75, v: pl ? 'The dark hours of that night' : sun > 0 ? 'Daylight' : sun > -6 ? 'Twilight' : sun > -18 ? 'Not fully dark yet' : 'Fully dark', why: sun > 0 ? 'Daylight at this hour' : 'Twilight at this hour' },
+      { k: 'Moon', f: moon, ok: moon >= 0.7, v: pl ? `${lit}% lit (not counted on a planned night)` : mp.alt <= 0 ? `Down (${lit}% lit)` : `Up, ${lit}% lit`, why: `Bright moon, ${lit}% lit` },
+      { k: 'Clouds', f: 1 - minCc / 100, ok: minCc <= 60, v: guess ? 'No forecast yet, clear sky assumed' : `${Math.round(minCc)}% cloud at the clearest point in view`, why: `Cloudy: ${Math.round(minCc)}% cloud at the clearest point in view` },
+      { k: 'Dark ground', f: maxSite, ok: maxSite >= 0.5, v: maxSite >= 0.85 ? 'Truly dark ground in view' : maxSite >= 0.5 ? 'Fairly dark ground in view' : 'Only town-lit ground in view', why: 'Town lights across this view' },
+    ];
+    o.best = best * dark * moon;
+    o.none = o.best < 0.3; // below "Fair": nothing on screen is worth calling gold
+    if (o.none) {
+      const bad = o.checks.filter((x) => !x.ok).sort((a, b) => a.f - b.f);
+      o.reason = bad.length ? bad.map((x) => x.why).slice(0, 2).join('; ') : 'The clear sky and the dark ground do not overlap here';
+    }
+    return o;
+  };
+  // The forecast and darkness data cover a box around home: a faint edge shows where it stops
+  let coverEdge = null;
+  function drawCover() {
+    if (coverEdge) { coverEdge.remove(); coverEdge = null; }
+    const g = D.grid;
+    if (!g || !(state.settings.layers.best || state.settings.layers.clouds)) return;
+    coverEdge = L.rectangle([[g.south, g.west], [g.north, g.east]], { renderer: linesRenderer, className: 'cover-edge', interactive: false }).addTo(map);
+  }
+  // Redraw the key only when what it says would change. The check behind it runs a few times a second at
+  // most, so a last look follows once things settle (the end of a scrub or a pan).
+  let keyTimer = 0;
+  function refreshKey(settled) {
+    if (!settled) { clearTimeout(keyTimer); keyTimer = setTimeout(() => refreshKey(true), 380); }
+    const i = app.keyInfo(), w = app.mapWhy(settled === true);
+    const sig = `${i.inReach}|${i.kp == null ? '' : i.kp.toFixed(1)}|${i.oval}|${i.planned}|${w.ready}|${w.none}|${w.reason}|${w.checks ? w.checks.map((x) => x.v).join('/') : ''}`;
     if (sig !== keySig) { keySig = sig; UI.renderLegend(); }
   }
   // The key covers part of a small map, so on a phone the sheet steps down to its tab bar while it is open
   function setKey(open) {
     keyOpen = open;
+    $('#reachHint').classList.toggle('under-key', open);
     if (isMobile()) {
       if (open && !UI.sheet.is('peek')) { keyPrevSnap = UI.sheet.snap; UI.sheet.snapTo('peek'); }
       else if (!open && keyPrevSnap) { if (UI.sheet.is('peek')) UI.sheet.snapTo(keyPrevSnap === 'full' ? 'half' : keyPrevSnap); keyPrevSnap = null; }
@@ -921,15 +1144,15 @@
   };
 
   app.shareLink = () => {
-    const payload = { v: 1, h: state.home, s: state.spots, l: state.log };
+    const payload = { v: 1, h: state.home, s: state.spots };
     const base = /^https?:$/.test(location.protocol) ? location.origin + location.pathname : SITE_URL;
     return `${base}#share=${U.b64e(JSON.stringify(payload))}`;
   };
   app.openShare = () => {
     const link = app.shareLink();
     const box = U.el('div');
-    const n = state.spots.length, m = state.log.length;
-    box.innerHTML = `<p>Send this link to your partner. Opening it offers to add ${state.home ? 'your home base, ' : ''}${n} saved spot${n === 1 ? '' : 's'} and ${m} journal entr${m === 1 ? 'y' : 'ies'} to their browser. Send a fresh link whenever you add more.</p>
+    const n = state.spots.length;
+    box.innerHTML = `<p>Send this link to your partner. Opening it offers to add ${state.home ? 'your home base, ' : ''}${state.home ? 'and ' : ''}${n} saved spot${n === 1 ? '' : 's'} to their browser. Send a fresh link whenever you add more.</p>
       <div class="share-box"><input type="text" id="shareLink" readonly value="${U.esc(link)}" aria-label="Share link"><button class="btn primary" type="button" id="shareCopy">${U.icon('copy')}Copy</button></div>
       ${navigator.share ? `<div style="margin-top:10px"><button class="btn" type="button" id="shareNative">${U.icon('share')}Share…</button></div>` : ''}
       <p class="snapshot" style="margin-top:12px">Everything rides inside the link after the # sign, which browsers never send to a server.</p>`;
@@ -953,13 +1176,6 @@
     kind: D.KINDS[s.kind] ? s.kind : null, zone: Number.isInteger(s.zone) && s.zone >= 0 && s.zone < 15 ? s.zone : null,
     hz: s.hz && num(s.hz.block) ? { block: s.hz.block, elev: num(s.hz.elev) ? s.hz.elev : null } : null, srcId: typeof s.srcId === 'string' ? s.srcId.slice(0, 24) : null, added: num(s.added) ? s.added : Date.now(),
   } : null);
-  const SAW = ['aurora', 'milkyway', 'meteors', 'planets', 'satellites', 'clouds'];
-  const cleanLog = (e) => (e && num(e.t) ? {
-    id: typeof e.id === 'string' ? e.id.slice(0, 24) : U.uid(), t: e.t, place: String(e.place || '').slice(0, 60),
-    saw: Array.isArray(e.saw) ? e.saw.filter((k) => SAW.includes(k)) : [], rating: Number.isInteger(e.rating) ? U.clamp(e.rating, 0, 5) : 0,
-    notes: String(e.notes || '').slice(0, 1000),
-    cond: e.cond && typeof e.cond === 'object' ? { kp: num(e.cond.kp) ? e.cond.kp : null, bz: num(e.cond.bz) ? e.cond.bz : null, v: num(e.cond.v) ? e.cond.v : null, cc: num(e.cond.cc) ? e.cond.cc : null, moon: num(e.cond.moon) ? e.cond.moon : null } : null,
-  } : null);
   function clearHash() { try { history.replaceState(null, '', location.pathname + location.search); } catch (e) { location.hash = ''; } }
   function checkImport() {
     const m = location.hash.match(/^#share=([A-Za-z0-9_-]+)$/);
@@ -967,29 +1183,24 @@
     let data;
     try { data = JSON.parse(U.b64d(m[1])); } catch (e) { UI.toast('That share link looks damaged.', { kind: 'error' }); clearHash(); return false; }
     const spots = (Array.isArray(data.s) ? data.s : []).map(cleanSpot).filter(Boolean);
-    const log = (Array.isArray(data.l) ? data.l : []).map(cleanLog).filter(Boolean);
     const home = data.h && num(data.h.lat) && num(data.h.lon) ? { lat: data.h.lat, lon: data.h.lon, name: String(data.h.name || 'Home').slice(0, 60) } : null;
     const newSpots = spots.filter((s) => !state.spots.some((x) => x.id === s.id || near(x, s)));
-    const newLog = log.filter((e) => !state.log.some((x) => x.id === e.id));
     const box = U.el('div');
-    box.innerHTML = `<p>This link holds ${home ? 'a home base, ' : ''}${spots.length} spot${spots.length === 1 ? '' : 's'} and ${log.length} journal entr${log.length === 1 ? 'y' : 'ies'}.</p>
+    box.innerHTML = `<p>This link holds ${home ? 'a home base, ' : ''}${home ? 'and ' : ''}${spots.length} spot${spots.length === 1 ? '' : 's'}.</p>
       ${home ? `<div class="set-row"><div><div class="t">Use their home base</div><div class="d">${U.esc(home.name)}${state.home ? ` (replaces ${U.esc(state.home.name)})` : ''}</div></div><label class="switch"><input type="checkbox" id="impHome" ${state.home ? '' : 'checked'} aria-label="Use their home base"><i></i></label></div>` : ''}
-      <p class="snapshot">${newSpots.length} new spot${newSpots.length === 1 ? '' : 's'} and ${newLog.length} new entr${newLog.length === 1 ? 'y' : 'ies'} will be added. Nothing of yours is removed.</p>
+      <p class="snapshot">${newSpots.length} new spot${newSpots.length === 1 ? '' : 's'} will be added. Nothing of yours is removed.</p>
       <div class="form-actions" style="margin-top:14px"><button class="btn ghost" type="button" data-close>Not now</button><button class="btn primary" type="button" id="impGo">Import</button></div>`;
     UI.modal('Import shared plans', box, { onClose: () => { clearHash(); if (!state.home) app.showWelcome(); } });
     $('#impGo').onclick = () => {
       state.spots.push(...newSpots);
-      state.log.push(...newLog);
       save('spots');
-      save('log');
       const useHome = home && $('#impHome') && $('#impHome').checked;
       UI.closeModal();
       clearHash();
       if (useHome) app.setHome(home); else if (!state.home) app.showWelcome();
       drawSpots();
       UI.renderSpots();
-      UI.renderLog();
-      UI.toast(`Imported ${newSpots.length} spot${newSpots.length === 1 ? '' : 's'} and ${newLog.length} journal entr${newLog.length === 1 ? 'y' : 'ies'}.`);
+      UI.toast(`Imported ${newSpots.length} spot${newSpots.length === 1 ? '' : 's'}.`);
     };
     return true;
   }
@@ -1000,30 +1211,33 @@
     box.innerHTML = `
       <div class="set-row"><div><div class="t">Home base</div><div class="d">${state.home ? `${U.esc(state.home.name)} · ${U.fmtCoord(state.home.lat, state.home.lon)}` : 'Not set'}</div></div><button class="btn sm" type="button" id="stHome">Change</button></div>
       <div class="set-row"><div><div class="t">Units</div><div class="d">Distance, temperature and wind</div></div><div class="seg" role="radiogroup" aria-label="Units"><button type="button" role="radio" data-u="imperial" aria-checked="${s.units !== 'metric'}">mi · °F</button><button type="button" role="radio" data-u="metric" aria-checked="${s.units === 'metric'}">km · °C</button></div></div>
-      <div class="set-row"><div><div class="t">Aurora alerts</div><div class="d">A chime and a notification while this page is open, when aurora is likely in view from home.</div></div><label class="switch"><input type="checkbox" id="stAlerts" ${s.alerts ? 'checked' : ''} aria-label="Aurora alerts"><i></i></label></div>
+      <div class="set-row"><div><div class="t">Aurora alerts</div><div class="d">A chime and a notification when aurora is likely in view from home. Works while Aurora Atlas is open: a background tab on a computer counts, a phone needs it on screen.</div></div><label class="switch"><input type="checkbox" id="stAlerts" ${s.alerts ? 'checked' : ''} aria-label="Aurora alerts"><i></i></label></div>
       <div class="set-row"><div><div class="t">Alert when the chance in view reaches</div><div class="d">From NOAA's 30-minute forecast. Kp within a third of what you need also counts.</div></div><select id="stThr" aria-label="Alert threshold">${[5, 10, 20, 30].map((v) => `<option value="${v}" ${v === s.alertThreshold ? 'selected' : ''}>${v}%</option>`).join('')}</select></div>
       <div class="set-row"><div><div class="t">Calm mode</div><div class="d">Stops the animation and particles to save battery.</div></div><label class="switch"><input type="checkbox" id="stCalm" ${s.calm ? 'checked' : ''} aria-label="Calm mode"><i></i></label></div>
       <div class="set-row"><div><div class="t">Light pollution strength</div><div class="d">How strongly the atlas colors show on the map.</div></div><input type="range" id="stLp" min="0.3" max="1" step="0.05" value="${s.lpOpacity}" style="width:130px" aria-label="Light pollution strength"></div>
-      <div class="set-row"><div><div class="t">Share with your partner</div><div class="d">Send your home, spots and journal as a link.</div></div><button class="btn sm" type="button" id="stShare">${U.icon('share')}Share</button></div>
+      <div class="set-row"><div><div class="t">How dark is dark enough</div><div class="d">How hard town glow counts against a place on the gold map, in the scores and in the spot finder. Forgiving lets a suburban sky rate; strict keeps the gold for truly dark ground.</div></div><div class="seg" role="radiogroup" aria-label="How dark is dark enough">${[['easy', 'Forgiving'], ['std', 'Balanced'], ['strict', 'Strict']].map(([v, l]) => `<button type="button" role="radio" data-taste="${v}" aria-checked="${(s.lpTaste || 'std') === v}">${l}</button>`).join('')}</div></div>
+      <div class="set-row"><div><div class="t">Share with your partner</div><div class="d">Send your home and spots as a link.</div></div><button class="btn sm" type="button" id="stShare">${U.icon('share')}Share</button></div>
       <h4>Take it outside</h4>
-      <p>At your spot, turn on night vision (the eye button): the page turns dim red so your eyes stay dark-adapted. On a phone, add Aurora Atlas to the home screen: in Safari tap Share, then Add to Home Screen; in Chrome open the menu, then Install app.</p>
+      <p>At your spot, turn on night vision (the eye button): the page turns dim red so your eyes stay dark-adapted, and the screen stays awake. The target button on the map shows where you are and the sky there. On a phone, add Aurora Atlas to the home screen: in Safari tap Share, then Add to Home Screen; in Chrome open the menu, then Install app.</p>
       <h4>How the numbers work</h4>
       <p><b>Kp you need.</b> NOAA's space weather scales say how far from the poles aurora reaches at each Kp: about 60° magnetic latitude at Kp 5, 55° at Kp 6, 50° at Kp 7, 45° at Kp 8 and 40° at Kp 9. Your magnetic latitude sets the Kp you need.</p>
       <p><b>Aurora right now.</b> NOAA's OVATION model gives the chance of aurora overhead on a 1° grid, about 30 minutes ahead. "In view" also counts aurora up to about 1,300 km away that would stand at least 3° above your horizon, taking the glow to be about 150 km up.</p>
       <p><b>Scores.</b> Each hour multiplies the aurora chance (stars skip this), clear sky, darkness, moonlight, and how much light pollution costs at that place. Thin high cloud counts 40% less than low cloud.</p>
       <p><b>Best sky.</b> Gold on the map is good stargazing: clear sky at the timeline's hour × how dark the sky is there (light pollution atlas) × darkness and moonlight. Green is where the aurora should be in view as well: the same clear, dark sky, as far south as the forecast Kp reaches. Auto shows both, Aurora or Stars shows just one. The moving green and violet curtains are NOAA's forecast of aurora overhead, and the dotted green line is how far south it is likely to be seen. In the Forecast tab, Auto leads with the aurora when the forecast Kp gets within one step of what your home needs, and with stars otherwise.</p>
-      <p><b>Spots.</b> The finder ranks the darkest, clearest ground within your radius, then picks the nearest real place to stand there from OpenStreetMap. Each one is checked for an open view toward the aurora (terrain only, from a 90 m elevation model), distance and tonight's clouds.</p>
+      <p><b>Spots.</b> The finder ranks the darkest, clearest ground within your radius, then picks the nearest real place to stand there from OpenStreetMap. Each one is checked for an open view toward the aurora (terrain only, from a 90 m elevation model), the drive from home and tonight's clouds. Drive times follow the roads with no traffic, so allow extra; a ferry counts as part of the route. Every spot says whether you can drive up to it or have to walk: a spot away from any road is marked as a hike, ranked lower, and its directions lead to where the road ends.</p>
+      <p><b>When the map is empty.</b> Gold needs four things at once: night, no bright moon, clear sky and dark ground. When nothing on screen is gold the map key names what is failing, and the open key lists all four. In night vision, where gold and green would look the same red, aurora ground is striped.</p>
       <h4>Data sources</h4>
       <ul>
         <li>Aurora, Kp, solar wind and alerts: <a href="https://www.swpc.noaa.gov" target="_blank" rel="noopener">NOAA Space Weather Prediction Center</a></li>
         <li>Clouds, weather, elevation and place search: <a href="https://open-meteo.com" target="_blank" rel="noopener">Open-Meteo</a></li>
         <li>Light pollution: <a href="https://djlorenz.github.io/astronomy/lp/" target="_blank" rel="noopener">David J. Lorenz, Light Pollution Atlas 2025</a></li>
         <li>Viewpoints, campgrounds and other places: <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a>, through <a href="https://photon.komoot.io" target="_blank" rel="noopener">Photon by Komoot</a></li>
+        <li>Drive times: <a href="https://project-osrm.org" target="_blank" rel="noopener">OSRM</a>, on OpenStreetMap roads</li>
         <li>Place names for dropped pins: BigDataCloud. Base maps: CARTO and Esri. Sun and Moon: SunCalc.</li>
       </ul>
       <h4>Your data</h4>
-      <p>Home, spots and journal stay in this browser. To move them to another device, use Share. Forecast lookups send map coordinates to the services above.</p>
-      <div class="set-row"><div><div class="t">Clear saved data</div><div class="d">Removes home, spots and journal from this browser.</div></div><button class="btn sm" type="button" id="stClear">Clear…</button></div>`;
+      <p>Home and spots stay in this browser. To move them to another device, use Share. Forecast and drive-time lookups send map coordinates to the services above.</p>
+      <div class="set-row"><div><div class="t">Clear saved data</div><div class="d">Removes home and spots from this browser.</div></div><button class="btn sm" type="button" id="stClear">Clear…</button></div>`;
     UI.modal('Settings', box);
     $('#stHome').onclick = () => { UI.closeModal(); app.showWelcome(); };
     U.$$('[data-u]', box).forEach((b) => { b.onclick = () => {
@@ -1033,6 +1247,18 @@
       infoCache.clear();
       UI.renderTonight(); UI.rebuildTimeline(); UI.renderSpots(); UI.renderLive();
       if (state.inspect) app.inspect(state.inspect.lat, state.inspect.lon, state.inspect);
+    }; });
+    U.$$('[data-taste]', box).forEach((b) => { b.onclick = () => {
+      s.lpTaste = b.dataset.taste;
+      save('settings');
+      Sky.lpGamma = TASTE[s.lpTaste] || 1;
+      U.$$('[data-taste]', box).forEach((x) => x.setAttribute('aria-checked', String(x === b)));
+      updateBest();
+      app.recomputeNights();
+      UI.renderTonight(); UI.rebuildTimeline(); UI.renderSpots();
+      if (state.inspect) UI.renderInspector(state.inspect);
+      app.mapWhy(true);
+      refreshKey();
     }; });
     $('#stAlerts').onchange = (e) => setAlerts(e.target.checked);
     $('#stThr').onchange = (e) => { s.alertThreshold = +e.target.value; save('settings'); };
@@ -1044,11 +1270,11 @@
       const b = e.currentTarget;
       if (!b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Tap again to clear'; b.classList.add('primary'); setTimeout(() => { if (b.isConnected) { delete b.dataset.armed; b.textContent = 'Clear…'; b.classList.remove('primary'); } }, 4000); return; }
       for (const k of Object.values(KEYS)) U.store.del(k);
-      state.home = null; state.spots = []; state.log = []; state.suggestions = []; state.selected = null;
+      state.home = null; state.spots = []; state.suggestions = []; state.selected = null;
       homeLayer.clearLayers(); drawSpots(); drawRadius();
       $('#homeChipText').textContent = 'Set home';
       UI.closeModal();
-      UI.renderTonight(); UI.rebuildTimeline(); UI.renderSpots(); UI.renderLog(); UI.renderLive();
+      UI.renderTonight(); UI.rebuildTimeline(); UI.renderSpots(); UI.renderLive();
       app.showWelcome();
     };
   };
@@ -1063,7 +1289,10 @@
     if (chk) chk.checked = on;
     if (on) {
       if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission().catch(() => {});
-      UI.toast(state.home ? 'Aurora alerts are on while this page is open.' : 'Aurora alerts are on. Set a home so they know where to look.');
+      const blocked = 'Notification' in window && Notification.permission === 'denied';
+      UI.toast(!state.home ? 'Aurora alerts are on. Set a home so they know where to look.'
+        : blocked ? 'Aurora alerts are on, but notifications are blocked for this site, so you will only hear the chime.'
+          : coarse ? 'Aurora alerts are on while Aurora Atlas is open and on screen.' : 'Aurora alerts are on while Aurora Atlas is open, even in a background tab.', { timeout: 6000 });
       checkAuroraAlert();
     } else UI.toast('Aurora alerts are off.');
   }
@@ -1086,6 +1315,16 @@
       setTimeout(() => ac.close(), 2600);
     } catch (e) { /* audio unavailable */ }
   }
+  // Phones only show notifications that come through the service worker, so go that way when there is one
+  function notify(msg) {
+    try {
+      if (!('Notification' in window) || Notification.permission !== 'granted') return;
+      const opts = { body: msg, icon: 'icons/icon-192.png', tag: 'aurora', renotify: true };
+      const plain = () => { try { new Notification('Aurora Atlas', opts); } catch (e) { /* this browser wants the worker */ } };
+      if (navigator.serviceWorker && navigator.serviceWorker.controller) navigator.serviceWorker.ready.then((r) => r.showNotification('Aurora Atlas', opts)).catch(plain);
+      else plain();
+    } catch (e) { /* notifications unavailable */ }
+  }
   let titleTimer = null;
   function flashTitle() {
     clearInterval(titleTimer);
@@ -1106,7 +1345,20 @@
     UI.toast(msg, { kind: 'aurora', timeout: 0, action: { label: 'Show me', run: () => { app.selectPlace(null); app.flyTo(state.home.lat, state.home.lon, 6); } } });
     chime();
     flashTitle();
-    try { if ('Notification' in window && Notification.permission === 'granted') new Notification('Aurora Atlas', { body: msg, icon: 'icons/icon-192.png', tag: 'aurora' }); } catch (e) { /* notifications unavailable */ }
+    notify(msg);
+  }
+
+  // ---------- Screen stays awake in night vision ----------
+  // Night vision means the phone is in use out at a spot, where a sleeping screen costs dark-adapted fumbling
+  let wakeLock = null;
+  async function syncWake() {
+    const want = !!state.settings.nightVision && !document.hidden;
+    try {
+      if (want && !wakeLock && navigator.wakeLock) {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+      } else if (!want && wakeLock) { const w = wakeLock; wakeLock = null; await w.release(); }
+    } catch (e) { wakeLock = null; }
   }
 
   // ---------- Data refresh ----------
@@ -1120,8 +1372,8 @@
   }
   async function refreshGrid() { if (state.home) await D.loadCloudGrid(state.home.lat, state.home.lon); }
   const jobs = [
-    { k: 'ovation', every: 5 * U.MIN, run: D.loadOvation },
-    { k: 'kp1m', every: 5 * U.MIN, run: D.loadKp1m },
+    { k: 'ovation', every: 5 * U.MIN, run: D.loadOvation, bg: true },
+    { k: 'kp1m', every: 5 * U.MIN, run: D.loadKp1m, bg: true },
     { k: 'kpFc', every: 30 * U.MIN, run: D.loadKpForecast },
     { k: 'sw', every: 10 * U.MIN, run: D.loadSolarWind },
     { k: 'swNow', every: 2 * U.MIN, run: D.loadSolarWindNow },
@@ -1142,7 +1394,11 @@
     finally { running[j.k] = false; UI.renderUpdated(); }
   }
   function tick() {
-    if (document.hidden) return;
+    if (document.hidden) {
+      // out of sight, the page still watches for the aurora when alerts are on (just the two feeds they use)
+      if (state.settings.alerts) for (const j of jobs) if (j.bg && (!lastRun[j.k] || Date.now() - lastRun[j.k] >= j.every)) runJob(j);
+      return;
+    }
     for (const j of jobs) if (!lastRun[j.k] || Date.now() - lastRun[j.k] >= j.every) runJob(j);
     if (state.live) {
       const before = UI.TL.t0;
@@ -1165,7 +1421,7 @@
   });
   AA.on('kp', () => { app.recomputeNights(); UI.renderLive(); UI.renderTonight(); UI.rebuildTimeline(); UI.renderSpace(); UI.renderLegend(); drawReach(); updateBest(); checkAuroraAlert(); });
   AA.on('sheet', () => { fxDirty = true; });
-  AA.on('site', (s) => { if (fx) fx.setSite(s); updateBest(); if (state.inspect) UI.renderInspector(state.inspect); });
+  AA.on('site', (s) => { if (fx) fx.setSite(s); updateBest(); if (state.inspect) UI.renderInspector(state.inspect); app.mapWhy(true); refreshKey(); });
   AA.on('sw', () => {
     UI.renderLive();
     UI.renderSWReadouts();
@@ -1181,22 +1437,32 @@
     updateBest();
     fxDirty = true;
     drawSpots();
+    drawCover();
     UI.renderSpots();
+    app.mapWhy(true);
+    refreshKey();
   });
 
   // ---------- Animation loop ----------
+  // The shimmer and sparks redraw the whole screen many times a second. On a phone, and always in night
+  // vision, they settle to a still picture once nobody has touched anything for a while.
+  let lastTouch = performance.now(), restT = null;
+  for (const ev of ['pointerdown', 'touchstart', 'keydown', 'wheel']) window.addEventListener(ev, () => { lastTouch = performance.now(); }, { passive: true, capture: true });
+  const resting = (now) => !playing && (coarse || state.settings.nightVision) && now - lastTouch > 25000;
   let lastFrame = performance.now(), lastFx = 0;
   function frame(now) {
     const dt = Math.min(0.1, (now - lastFrame) / 1000);
     lastFrame = now;
     if (!document.hidden) {
-      const c = calm();
-      const tSec = c ? 120 : now / 1000;
+      const rest = !calm() && resting(now);
+      if (rest && restT == null) { restT = now / 1000; particles.clear(); fxDirty = true; } else if (!rest) restT = null;
+      const c = calm() || rest;
+      const tSec = rest ? restT : c ? 120 : now / 1000;
       // nothing to draw while a full-height sheet covers the map; phones also run the map effects at a gentler rate
       if (!(isMobile() && UI.sheet.is('full'))) {
         if (fx && (mapMoving || fxDirty || fx.busy || (!c && now - lastFx > (coarse ? 50 : 32)))) { fx.render(tSec); lastFx = now; fxDirty = false; }
         if (!c && state.settings.layers.aurora) particles.step(dt);
-        else if (mapMoving) particles.step(0);
+        else if (mapMoving && !rest) particles.step(0);
       }
       if (playing) advancePlay(dt);
       if (UI.activeTab === 'space' && !c) sw.step(dt);
@@ -1252,6 +1518,15 @@
       app.selectPlace(null);
       app.flyTo(state.home.lat, state.home.lon, Math.max(7.5, map.getZoom()));
     };
+    $('#locateBtn').onclick = () => app.locate();
+    const BASES = ['night', 'terrain', 'satellite'];
+    $('#baseCycle').onclick = () => {
+      state.settings.base = BASES[(BASES.indexOf(state.settings.base) + 1) % BASES.length];
+      save('settings');
+      applyBase();
+      UI.toast(`${{ night: 'Night', terrain: 'Terrain', satellite: 'Satellite' }[state.settings.base]} map`, { timeout: 1400 });
+    };
+    $('#reachHint').onclick = () => { if (hintGo) hintGo(); };
     $('#legendBtn').onclick = () => toggleKey();
     $('#legend').addEventListener('click', (e) => {
       if (e.target.closest('#keyStrip')) toggleKey(true);
@@ -1265,6 +1540,10 @@
       save('settings');
       document.documentElement.classList.toggle('night-vision', state.settings.nightVision);
       $('#nightBtn').setAttribute('aria-pressed', String(state.settings.nightVision));
+      syncWake();
+      updateBest();
+      UI.renderLegend();
+      if (state.settings.nightVision && navigator.wakeLock) UI.toast('Night vision on. The screen stays awake while it is.', { timeout: 2600 });
     };
     $('#findBtn').onclick = () => app.findSpots();
     $('#radiusSel').onchange = (e) => { state.settings.radiusKm = +e.target.value; save('settings'); drawRadius(); };
@@ -1274,7 +1553,7 @@
     map.on('click', (e) => {
       if (state.picking) { app.setHome({ lat: e.latlng.lat, lon: U.wrapLon(e.latlng.lng), name: 'Home' }); UI.toast(`Home set. ${fineTune}`); return; }
       if (compactKey() && keyOpen) { setKey(false); return; }
-      app.inspect(e.latlng.lat, U.wrapLon(e.latlng.lng), { kind: 'pin' });
+      app.inspect(e.latlng.lat, U.wrapLon(e.latlng.lng), { kind: 'pin', quiet: true });
     });
     document.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && $('#modal').hidden && state.inspect) app.closeInspector();
@@ -1292,7 +1571,10 @@
       const a = document.activeElement;
       if (!a || !a.matches || !a.matches('input, textarea, select')) window.scrollTo(0, 0);
     }, 120));
-    document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) tick(); syncWake(); });
+    // back in coverage: fetch everything again right away. Out of it: say so.
+    window.addEventListener('online', () => { for (const k of Object.keys(lastRun)) delete lastRun[k]; tick(); });
+    window.addEventListener('offline', () => UI.renderUpdated());
     if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => { UI.moveInk(); UI.rebuildTimeline(); UI.renderTonight(); });
   }
 
@@ -1309,13 +1591,12 @@
     placeHome();
     UI.bindHourly();
     UI.bindSpots();
-    UI.bindLog();
     UI.bindTimeline();
     UI.bindNights();
     bindUI();
     bindWelcome();
     const tab = U.store.get('aa.tab', 'tonight');
-    UI.setTab(['tonight', 'spots', 'space', 'log'].includes(tab) ? tab : 'tonight');
+    UI.setTab(['tonight', 'spots', 'space'].includes(tab) ? tab : 'tonight');
     drawRadius();
     UI.renderLegend();
     applyLegend();
@@ -1331,6 +1612,7 @@
     if (location.protocol === 'file:') {
       UI.toast('This is the local copy of the file. The live site has everything working.', { timeout: 0, action: { label: 'Open live site', run: () => { location.href = SITE_URL; } } });
     }
+    syncWake();
     tick();
     setInterval(tick, 15e3);
     requestAnimationFrame(frame);

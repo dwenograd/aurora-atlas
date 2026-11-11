@@ -18,7 +18,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bodoni+Moda:ital,opsz,wght@0,6..96,400..700;1,6..96,400..700&family=Hanken+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400..600&display=swap">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
-  <link rel="stylesheet" href="styles.css?v=17">
+  <link rel="stylesheet" href="styles.css?v=18">
 </head>
 <body>
   <!-- Icon sprite -->
@@ -45,7 +45,6 @@
       <symbol id="i-moon" viewBox="0 0 24 24"><path d="M19.2 14.6A7.6 7.6 0 1 1 9.4 4.8a6.1 6.1 0 0 0 9.8 9.8z"/></symbol>
       <symbol id="i-locate" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.4"/><circle cx="12" cy="12" r="1.8"/><path d="M12 2.4v3.2M12 18.4v3.2M2.4 12h3.2M18.4 12h3.2"/></symbol>
       <symbol id="i-bell" viewBox="0 0 24 24"><path d="M6.2 16.2V11a5.8 5.8 0 0 1 11.6 0v5.2l1.6 2.1H4.6z"/><path d="M10 20.6a2 2 0 0 0 4 0"/></symbol>
-      <symbol id="i-book" viewBox="0 0 24 24"><path d="M5.2 4.6h10.4a2.4 2.4 0 0 1 2.4 2.4v12.6H7.6a2.4 2.4 0 0 1-2.4-2.4z"/><path d="M5.2 17.2a2.4 2.4 0 0 1 2.4-2.4H18"/></symbol>
       <symbol id="i-sparkle" viewBox="0 0 24 24"><path d="M12 3.2c.6 4.4 2.4 6.3 6.8 6.8-4.4.6-6.2 2.4-6.8 6.8-.6-4.4-2.4-6.2-6.8-6.8 4.4-.5 6.2-2.4 6.8-6.8z"/><path d="M18.5 15.5c.25 1.6.9 2.25 2.5 2.5-1.6.25-2.25.9-2.5 2.5-.25-1.6-.9-2.25-2.5-2.5 1.6-.25 2.25-.9 2.5-2.5z"/></symbol>
       <symbol id="i-binoculars" viewBox="0 0 24 24"><circle cx="7" cy="15.4" r="3.4"/><circle cx="17" cy="15.4" r="3.4"/><path d="M10.4 15.4h3.2M4.6 12.6l2-6.4h3.2v6.6M19.4 12.6l-2-6.4h-3.2v6.6"/></symbol>
       <symbol id="i-tent" viewBox="0 0 24 24"><path d="M3 19.2 12 5l9 14.2z"/><path d="m9.4 19.2 2.6-5 2.6 5"/></symbol>
@@ -64,6 +63,7 @@
       <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2.6v2.2M12 19.2v2.2M2.6 12h2.2M19.2 12h2.2M5.4 5.4l1.5 1.5M17.1 17.1l1.5 1.5M5.4 18.6l1.5-1.5M17.1 6.9l1.5-1.5"/></symbol>
       <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.4 4.4L19 7.4"/></symbol>
       <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5.2 12h13.6"/></symbol>
+      <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="4.4" y="5.6" width="15.2" height="14" rx="2"/><path d="M4.4 10h15.2M8.4 3.6v4M15.6 3.6v4"/></symbol>
       <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.6"/><path d="M12 11v5.2M12 7.6v.2"/></symbol>
     </defs>
   </svg>
@@ -124,6 +124,8 @@
       <button class="icon-btn" id="zoomIn" type="button" aria-label="Zoom in"><svg class="ic"><use href="#i-plus"/></svg></button>
       <button class="icon-btn" id="zoomOut" type="button" aria-label="Zoom out"><svg class="ic"><use href="#i-minus"/></svg></button>
       <button class="icon-btn" id="goHome" type="button" aria-label="Back to home" title="Back to home"><svg class="ic"><use href="#i-home"/></svg></button>
+      <button class="icon-btn" id="locateBtn" type="button" aria-label="Show where I am" title="Show where I am"><svg class="ic"><use href="#i-locate"/></svg></button>
+      <button class="icon-btn" id="baseCycle" type="button" aria-label="Change the base map" title="Change the base map"><svg class="ic"><use href="#i-moon"/></svg></button>
       <button class="icon-btn" id="legendBtn" type="button" aria-label="Show map legend" title="Map legend" aria-pressed="true"><svg class="ic"><use href="#i-info"/></svg></button>
     </div>
     </div>
@@ -134,7 +136,6 @@
         <button class="tab-btn" role="tab" id="t-tonight" aria-controls="tab-tonight" aria-selected="true" data-tab="tonight"><svg class="ic"><use href="#i-moon"/></svg>Forecast</button>
         <button class="tab-btn" role="tab" id="t-spots" aria-controls="tab-spots" aria-selected="false" data-tab="spots"><svg class="ic"><use href="#i-pin"/></svg>Spots</button>
         <button class="tab-btn" role="tab" id="t-space" aria-controls="tab-space" aria-selected="false" data-tab="space"><svg class="ic"><use href="#i-sun"/></svg>Space</button>
-        <button class="tab-btn" role="tab" id="t-log" aria-controls="tab-log" aria-selected="false" data-tab="log"><svg class="ic"><use href="#i-book"/></svg>Journal</button>
         <i class="tab-ink" id="tabInk" aria-hidden="true"></i>
       </nav>
 
@@ -152,9 +153,9 @@
           </div>
         </div>
         <button class="back-home" id="backHome" type="button" hidden><svg class="ic"><use href="#i-home"/></svg>Back to home</button>
+        <div class="verdict" id="verdict"></div>
         <div class="sec nights-sec" id="nights"></div>
         <div class="sec-head tonight-head"><h3>Tonight in detail</h3></div>
-        <div class="verdict" id="verdict"></div>
         <div class="facts" id="facts"></div>
         <div class="sec">
           <div class="sec-head"><h3>Tonight, hour by hour</h3><span class="sec-note" id="hourlyNote"></span></div>
@@ -166,7 +167,7 @@
 
       <div class="tab-body" id="tab-spots" role="tabpanel" aria-labelledby="t-spots" hidden>
         <div class="sec-head"><h3>Dark spots near home</h3></div>
-        <p class="lead-note">Finds the darkest, clearest ground around home on the Best sky map, then the nearest real place to stand there: viewpoints, campgrounds, beaches, boat launches and parks from OpenStreetMap. Ranked by darkness, an open view north, distance and tonight's clouds.</p>
+        <p class="lead-note">Finds the darkest, clearest ground around home on the Best sky map, then the nearest real place to stand there: viewpoints, campgrounds, beaches, boat launches and parks from OpenStreetMap. Ranked by darkness, an open view north, the drive from home and tonight's clouds.</p>
         <div class="finder">
           <label for="radiusSel">Within</label>
           <select id="radiusSel"></select>
@@ -202,12 +203,6 @@
         </div>
       </div>
 
-      <div class="tab-body" id="tab-log" role="tabpanel" aria-labelledby="t-log" hidden>
-        <div class="sec-head"><h3>Our nights out</h3><div class="sec-actions"><button class="btn primary sm" id="logNewBtn" type="button"><svg class="ic"><use href="#i-plus"/></svg>Log a night</button></div></div>
-        <form class="log-form" id="logForm" hidden></form>
-        <div class="log-stats" id="logStats"></div>
-        <ul class="log-list" id="logList"></ul>
-      </div>
     </aside>
 
     <div class="timeline glass" id="timeline">
@@ -222,6 +217,7 @@
       </div>
     </div>
 
+    <button class="reach-hint glass" id="reachHint" type="button" hidden></button>
     <div class="legend glass" id="legend"></div>
     <div class="inspector glass" id="inspector" hidden></div>
     <div class="toasts" id="toasts" aria-live="polite"></div>
@@ -262,11 +258,11 @@
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/suncalc/1.9.0/suncalc.min.js"></script>
-  <script src="js/util.js?v=17"></script>
-  <script src="js/sky.js?v=17"></script>
-  <script src="js/data.js?v=17"></script>
-  <script src="js/fx.js?v=17"></script>
-  <script src="js/ui.js?v=17"></script>
-  <script src="js/app.js?v=17"></script>
+  <script src="js/util.js?v=18"></script>
+  <script src="js/sky.js?v=18"></script>
+  <script src="js/data.js?v=18"></script>
+  <script src="js/fx.js?v=18"></script>
+  <script src="js/ui.js?v=18"></script>
+  <script src="js/app.js?v=18"></script>
 </body>
 </html>

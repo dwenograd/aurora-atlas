@@ -197,9 +197,13 @@
   // ---------- Scoring ----------
   // How much a site's light pollution costs you: stars suffer a lot, bright aurora much less.
   Sky.SITE_STARS = [1, 0.97, 0.94, 0.9, 0.85, 0.77, 0.67, 0.53, 0.41, 0.29, 0.2, 0.12, 0.07, 0.04, 0.02];
+  // Taste: how hard town glow counts against a place. The exponent bends the whole scale: below 1 forgives
+  // (a suburban sky still rates), above 1 is strict (only truly dark ground rates). Set from Settings.
+  Sky.lpGamma = 1;
+  Sky.siteAdj = (v) => (v == null ? v : Math.pow(v, Sky.lpGamma));
   Sky.siteFactor = (zone, mode) => {
     if (zone == null) return mode === 'stars' ? 0.55 : 0.8;
-    const s = Sky.SITE_STARS[zone];
+    const s = Sky.siteAdj(Sky.SITE_STARS[zone]);
     return mode === 'stars' ? s : 1 - 0.45 * (1 - s);
   };
   Sky.darkFactor = (sunAlt, mode) => {

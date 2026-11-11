@@ -120,6 +120,12 @@ window.AA = window.AA || {};
     if (U.imperial()) { const mi = km * 0.621371; return mi < 10 ? `${mi.toFixed(1)} mi` : `${Math.round(mi)} mi`; }
     return km < 10 ? `${km.toFixed(1)} km` : `${Math.round(km)} km`;
   };
+  // Drive time: "45 min", "1 h 25 min" (to the nearest 5 minutes once past the hour)
+  U.fmtDrive = (min) => {
+    if (min < 57.5) return `${Math.max(1, Math.round(min))} min`;
+    const m5 = Math.round(min / 5) * 5, h = Math.floor(m5 / 60), r = m5 % 60;
+    return r ? `${h} h ${r} min` : `${h} h`;
+  };
   U.fmtElev = (m) => (U.imperial() ? `${Math.round(m * 3.28084).toLocaleString()} ft` : `${Math.round(m).toLocaleString()} m`);
   U.tempUnit = () => (U.imperial() ? '°F' : '°C');
   U.windUnit = () => (U.imperial() ? 'mph' : 'km/h');

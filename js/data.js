@@ -21,6 +21,7 @@
     geo: 'https://geocoding-api.open-meteo.com/v1/search',
     reverse: 'https://api.bigdatacloud.net/data/reverse-geocode-client',
     photon: 'https://photon.komoot.io/reverse',
+    route: 'https://router.project-osrm.org/table/v1/driving/',
     lp: 'https://djlorenz.github.io/astronomy/image_tiles/tiles2025/tile_{z}_{x}_{y}.png',
   };
   const MON = { Jan: 0, Feb: 1, Mar: 2, Apr: 3, May: 4, Jun: 5, Jul: 6, Aug: 7, Sep: 8, Oct: 9, Nov: 10, Dec: 11 };
@@ -137,6 +138,14 @@
     let n = null;
     for (let i = D.wind.length - 1; i >= 0 && i > D.wind.length - 30; i--) if (D.wind[i].n != null) { n = D.wind[i].n; break; }
     return { v: w ? w.v : null, n, bz: m ? m.bz : null, bt: m ? m.bt : null, t: Math.max(w ? w.t : 0, m ? m.t : 0) || null };
+  };
+
+  // When the newest live reading was actually measured. Offline, the service worker hands back the last
+  // saved copies, so "fetched just now" proves nothing: the data's own timestamps do.
+  D.dataTime = () => {
+    const k = D.kp1m[D.kp1m.length - 1], s = D.swNow();
+    const ts = [D.ov ? D.ov.obs : 0, k ? k.t : 0, s.t || 0].filter((t) => Number.isFinite(t) && t > 0);
+    return ts.length ? Math.max(...ts) : null;
   };
 
   // ---------- NOAA: alerts, outlook, hemispheric power ----------
@@ -376,7 +385,7 @@
     if (!s) return null;
     const fx = ((lon - s.west) / (s.east - s.west)) * (s.W - 1), fy = ((lat - s.south) / (s.north - s.south)) * (s.H - 1);
     if (!(fx >= 0 && fy >= 0 && fx <= s.W - 1 && fy <= s.H - 1)) return null;
-    return s.data[Math.round(fy) * s.W + Math.round(fx)] / 255;
+    return AA.Sky.siteAdj(s.data[Math.round(fy) * s.W + Math.round(fx)] / 255);
   };
 
   // ---------- OpenStreetMap places to stand (Photon by Komoot) ----------
@@ -451,6 +460,39 @@
       const mean = prof.reduce((sum, p) => sum + p.ang, 0) / prof.length;
       return { elev: base, prof, block: Math.max(0, mean), worst: Math.max(0, ...prof.map((p) => p.ang)) };
     });
+  };
+
+  // ---------- Drive times (OSRM, on OpenStreetMap roads) ----------
+  // One request gives the drive from one place to many. Each answer is { min, km, snap }: minutes and road
+  // km with no traffic, how far the point sits from the nearest road (km), and where on that road the
+  // drive ends ([lat, lon]). min is null when no road route exists. A point nobody has asked about yet reads as undefined.
+  const driveMem = new Map();
+  const dkey = (a, b) => `drv:${a.lat.toFixed(3)},${a.lon.toFixed(3)}>${b.lat.toFixed(3)},${b.lon.toFixed(3)}`;
+  D.driveCached = (from, p) => {
+    const k = dkey(from, p);
+    let hit = driveMem.get(k);
+    if (hit === undefined) { const c = U.cacheGet(k, 30 * U.DAY); if (c) { hit = c; driveMem.set(k, c); } }
+    return hit;
+  };
+  D.driveTimes = async (from, pts, { persist = false } = {}) => {
+    const out = pts.map((p) => D.driveCached(from, p));
+    const need = [];
+    out.forEach((v, i) => { if (v === undefined) need.push(i); });
+    const ll = (p) => `${p.lon.toFixed(4)},${p.lat.toFixed(4)}`;
+    for (let s = 0; s < need.length; s += 40) {
+      const idx = need.slice(s, s + 40);
+      const url = `${D.URL.route}${[from, ...idx.map((i) => pts[i])].map(ll).join(';')}?sources=0&annotations=duration,distance`;
+      const j = await U.retry(() => U.fetchJSON(url, { timeout: 20000 }), 2, 1500);
+      if (!j || j.code !== 'Ok' || !j.durations) throw new Error('No routing answer');
+      idx.forEach((i, n) => {
+        const sec = j.durations[0][n + 1], m = j.distances ? j.distances[0][n + 1] : null, dst = j.destinations && j.destinations[n + 1];
+        const v = { min: sec == null ? null : sec / 60, km: m == null ? null : m / 1000, snap: dst && dst.distance != null ? dst.distance / 1000 : 0, at: dst && dst.location ? [+dst.location[1].toFixed(5), +dst.location[0].toFixed(5)] : null };
+        out[i] = v;
+        driveMem.set(dkey(from, pts[i]), v);
+        if (persist) U.cachePut(dkey(from, pts[i]), v);
+      });
+    }
+    return out;
   };
 
   // ---------- Place search ----------

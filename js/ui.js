@@ -58,7 +58,6 @@
     if (name === 'tonight') { UI.renderTonight(); UI.renderNights(); }
     if (name === 'spots') UI.renderSpots();
     if (name === 'space') UI.renderSpace();
-    if (name === 'log') UI.renderLog();
   };
   UI.moveInk = () => {
     const b = $(`.tab-btn[data-tab="${UI.activeTab}"]`), ink = $('#tabInk');
@@ -98,14 +97,31 @@
     }
     UI.renderUpdated();
   };
+  // Stale: the newest live reading is old, or the device is offline (where the service worker serves the
+  // last saved forecast as if it were new). null when all is well.
+  const fmtWhen = (t) => (U.isSameDay(t, Date.now()) ? U.fmtClock(t) : `${U.isSameDay(t, Date.now() - U.DAY) ? 'yesterday' : U.fmtDay(t)} ${U.fmtClock(t)}`);
+  UI.stale = () => {
+    const dt = D.dataTime(), off = navigator.onLine === false;
+    if (!dt) return off ? { off, text: 'Offline, no saved forecast' } : null;
+    if (!off && Date.now() - dt <= 45 * U.MIN) return null;
+    return { off, t: dt, text: `${off ? 'Offline · data' : 'Data'} from ${fmtWhen(dt)}` };
+  };
+  let wasStale = false;
   UI.renderUpdated = () => {
     const u = D.updated;
     const last = Math.max(u.ovation || 0, u.kp1m || 0, u.sw || 0);
     const failing = Object.keys(D.errors).length > 0;
-    $('#liveUpdated').textContent = last ? `Live · updated ${U.ago(Date.now() - last)}` : failing ? 'NOAA unreachable, retrying' : 'Connecting…';
+    const stl = UI.stale();
+    $('#liveUpdated').textContent = stl ? stl.text : last ? `Live · updated ${U.ago(Date.now() - last)}` : failing ? 'NOAA unreachable, retrying' : 'Connecting…';
+    $('#live').classList.toggle('stale', !!stl);
+    if (!!stl !== wasStale) {
+      wasStale = !!stl;
+      if (stl) UI.toast(`${stl.text}. The numbers on screen may be out of date.`, { timeout: 7000 });
+    }
+    UI.updateTimelineHead(); // phones have no room for the "updated" line, so the timeline carries the warning
     const p = $('.live-upd .pulse');
     if (!p) return;
-    p.classList.toggle('stale', !last || Date.now() - last > 20 * U.MIN);
+    p.classList.toggle('stale', !!stl || !last || Date.now() - last > 20 * U.MIN);
     if (last && last !== UI._lastFresh) {
       // pulse only when new data has actually arrived
       UI._lastFresh = last;
@@ -223,7 +239,7 @@
       $('#auroraNow').innerHTML = '';
       return;
     }
-    const kinds = { home: 'Home base', spot: 'Our spot', sug: 'Suggested spot', pin: 'Dropped pin' };
+    const kinds = { home: 'Home base', spot: 'Our spot', sug: 'Suggested spot', pin: 'Dropped pin', me: 'Where you are' };
     $('#placeKind').textContent = kinds[p.kind] || 'Place';
     $('#placeName').textContent = p.name;
     const ml = Sky.magLat(p.lat, p.lon), need = Sky.kpNeeded(ml);
@@ -429,7 +445,7 @@
   // ---------- Coming nights ----------
   const lvlColor = (n) => (!n.lvl ? 'var(--ink-3)' : n.lvl.s >= 0.75 ? 'var(--good)' : n.lvl.s >= 0.45 ? '#c8e86a' : n.lvl.s >= 0.18 ? 'var(--warn)' : 'var(--ink-3)');
   const dayName = (t) => (t <= Date.now() ? 'Now' : U.isSameDay(t, Date.now()) ? 'Tonight' : U.isSameDay(t, Date.now() + U.DAY) ? 'Tomorrow' : U.fmtDay(t));
-  const placeLabel = (b) => (b.p.name === 'home' ? 'at home' : `near ${b.p.name}`);
+  const placeLabel = (b) => (b.p.name === 'home' ? 'at home' : b.p.ring ? b.p.name : `near ${b.p.name}`);
   UI.renderNights = () => {
     const box = $('#nights');
     if (!box) return;
@@ -455,13 +471,14 @@
         ? `Kp up to ${plan.kp.toFixed(1)} (${esc(plan.kpSrc)}): <b style="color:${lvlColor(plan)}">${esc(plan.lvl.label.toLowerCase())}</b> from home, where you need ${plan.need.toFixed(1)}.`
         : 'No Kp forecast for this night yet.';
       const moonLine = `Moon ${Math.round(plan.moon * 100)}%${plan.moonUp > 0.1 ? `, up ${Math.round(plan.moonUp * 100)}% of the night` : ', down most of the night'}.`;
-      const areas = plan.areas.map((a, i) => `<li data-area="${i}"><i class="plan-pin">${'ABC'[i]}</i><span class="pa-name">${esc(a.name || 'Finding the place name…')}<small>${U.fmtDist(a.d)} ${U.compass(U.bearing(s.home, a))} of home</small></span><span class="pa-tags">${z(a)}<a class="btn sm ghost" href="${UI.directionsUrl(a.lat.toFixed(4), a.lon.toFixed(4))}" target="_blank" rel="noopener">${icon('route')}Go</a></span></li>`).join('');
+      const areas = plan.areas.map((a, i) => `<li data-area="${i}"><i class="plan-pin">${'ABC'[i]}</i><span class="pa-name">${esc(a.name || 'Finding the place name…')}<small>${a.drive && a.drive.min != null ? `${U.fmtDrive(a.drive.min)} drive${a.drive.snap > WALK_KM ? `, then a ${U.fmtDist(a.drive.snap)} hike` : ''} · ` : ''}${U.fmtDist(a.d)} ${U.compass(U.bearing(s.home, a))} of home</small></span><span class="pa-tags">${z(a)}<a class="btn sm ghost" href="${UI.directionsUrl(a.lat.toFixed(4), a.lon.toFixed(4))}" target="_blank" rel="noopener">${icon('route')}Go</a></span></li>`).join('');
       planHtml = `<div class="plan-card">
         <div class="plan-top"><div><span class="eyebrow">Planning</span><h4>${esc(U.fmtDateLong(plan.from))}</h4></div><button class="btn sm ghost" type="button" id="planBack">Back to now</button></div>
         <p>${kpLine} ${moonLine}</p>
         <p class="plan-note">${plan.assume ? 'Too far out for a cloud forecast, so the gold map assumes clear skies. Check back a few days before.' : 'Includes the cloud forecast for that night.'}</p>
         <ol class="plan-areas">${areas}</ol>
-        <p class="plan-note">A, B and C are the darkest ground within your radius${plan.lvl && plan.lvl.s >= 0.45 ? ', leaning north for the aurora' : ''}. Tap one, then check road access on the satellite view, or run Find spots for named places.</p>
+        <p class="plan-note">A, B and C are the darkest ground within your radius that is a sensible drive${plan.lvl && plan.lvl.s >= 0.45 ? ', leaning north for the aurora' : ''}. Tap one, then check road access on the satellite view, or run Find spots for named places.</p>
+        <div class="plan-actions"><button class="btn sm" type="button" id="planCal">${icon('calendar')}Add to calendar</button></div>
       </div>`;
     }
     const row = (n, i) => {
@@ -489,6 +506,7 @@
     $('#nights').addEventListener('click', (e) => {
       if (e.target.closest('a')) return;
       if (e.target.closest('#planBack')) { app().clearPlan(); return; }
+      if (e.target.closest('#planCal')) { app().planIcs(); return; }
       const ar = e.target.closest('[data-area]');
       if (ar) {
         const a = st().plan && st().plan.areas[+ar.dataset.area];
@@ -651,6 +669,31 @@
   };
   UI.directionsUrl = (lat, lon) => (/Mac|iPhone|iPad/i.test(navigator.platform || navigator.userAgent) ? `https://maps.apple.com/?daddr=${lat},${lon}` : `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}`);
 
+  // "1 h 25 min drive (62 mi)" when the roads are known, the straight line (and saying so) when they are not
+  const driveOf = (g) => g.drive || app().driveFor(g);
+  const driveTxt = (g, crowKm) => {
+    const dv = driveOf(g);
+    if (dv && dv.min != null) return `${U.fmtDrive(dv.min)} drive (${U.fmtDist(dv.km)})`;
+    return crowKm == null ? '' : `${U.fmtDist(crowKm)} in a straight line${dv ? ', no road route' : ''}`;
+  };
+  // Can you drive up to it, or is there a walk in the dark? Measured from the nearest road on the map, in a
+  // straight line, so a real trail is longer.
+  const WALK_KM = 0.4;
+  const walkTip = 'Straight-line distance from the nearest road on the map. The trail will be longer.';
+  const roadTag = (g) => {
+    const dv = driveOf(g);
+    if (!dv || dv.min == null) return '';
+    if (dv.snap <= 0.15) return `<span class="tag good" title="A road reaches this spot">${icon('route')}Drive-up</span>`;
+    if (dv.snap <= WALK_KM) return `<span class="tag" title="${walkTip}">${icon('sign')}Short walk, ${U.fmtDist(dv.snap)}</span>`;
+    return `<span class="tag ${dv.snap > 1.5 ? 'bad' : 'warn'}" title="${walkTip}">${icon('sign')}Hike: ${U.fmtDist(dv.snap)} from the road</span>`;
+  };
+  // Where the car stops: the spot itself, or the end of the road when the rest is on foot
+  UI.parkAt = (g) => {
+    const dv = driveOf(g);
+    return dv && dv.min != null && dv.at && dv.snap > WALK_KM ? { lat: dv.at[0], lon: dv.at[1], hike: true } : { lat: g.lat, lon: g.lon, hike: false };
+  };
+  const dirLink = (g) => { const p = UI.parkAt(g); return `<a class="btn sm ghost" href="${UI.directionsUrl(p.lat, p.lon)}" target="_blank" rel="noopener">${icon('route')}${p.hike ? 'Directions to parking' : 'Directions'}</a>`; };
+
   UI.finderStatus = (steps, idx, fail) => {
     const box = $('#finderStatus');
     if (!steps) { box.hidden = true; return; }
@@ -677,12 +720,12 @@
         const active = `${g.lat.toFixed(4)},${g.lon.toFixed(4)}` === selKey;
         return `<li class="spot ${active ? 'active' : ''}" data-i="${i}" tabindex="0">
           <span class="spot-rank">${i + 1}</span>
-          <span class="spot-name">${esc(g.name || k.label)}<span class="spot-type">${esc(k.label)} · ${U.fmtDist(g.dist)} from home</span></span>
+          <span class="spot-name">${esc(g.name || k.label)}<span class="spot-type">${esc(k.label)} · ${esc(driveTxt(g, g.dist))}</span></span>
           <span class="spot-score"><b>${Math.round(g.score * 100)}</b><small>Score</small></span>
-          <span class="spot-meta">${zoneTag(g.zone)}${horizonTag(g.hz)}${tonightTag(app().tonightFor(g))}</span>
+          <span class="spot-meta">${zoneTag(g.zone)}${horizonTag(g.hz)}${tonightTag(app().tonightFor(g))}${roadTag(g)}</span>
           <span class="spot-actions">
             <button class="btn sm" type="button" data-act="save" ${saved ? 'disabled' : ''}>${icon(saved ? 'check' : 'star')}${saved ? 'Saved' : 'Save'}</button>
-            <a class="btn sm ghost" href="${UI.directionsUrl(g.lat, g.lon)}" target="_blank" rel="noopener">${icon('route')}Directions</a>
+            ${dirLink(g)}
           </span></li>`;
       }).join('');
     }
@@ -692,20 +735,22 @@
     } else {
       saved.innerHTML = s.spots.map((p, i) => {
         const active = `${p.lat.toFixed(4)},${p.lon.toFixed(4)}` === selKey;
-        const dist = s.home ? U.fmtDist(U.distKm(s.home, p)) + ' from home' : '';
+        const dist = s.home ? driveTxt(p, U.distKm(s.home, p)) : '';
         return `<li class="spot spot-saved ${active ? 'active' : ''}" data-s="${i}" tabindex="0">
           <span class="spot-rank">${icon('star')}</span>
           <span class="spot-name">${esc(p.name)}<span class="spot-type">${esc([p.kind ? kindInfo(p.kind).label : 'Our spot', dist].filter(Boolean).join(' · '))}</span></span>
           <span class="spot-score"></span>
-          <span class="spot-meta">${zoneTag(p.zone)}${horizonTag(p.hz)}</span>
+          <span class="spot-meta">${zoneTag(p.zone)}${horizonTag(p.hz)}${roadTag(p)}</span>
           ${p.note ? `<span class="spot-note">${esc(p.note)}</span>` : ''}
           <span class="spot-actions">
-            <a class="btn sm ghost" href="${UI.directionsUrl(p.lat, p.lon)}" target="_blank" rel="noopener">${icon('route')}Directions</a>
+            ${dirLink(p)}
             <button class="btn sm ghost" type="button" data-act="rename">Rename</button>
             <button class="btn sm ghost" type="button" data-act="remove" aria-label="Remove ${esc(p.name)}">${icon('trash')}</button>
           </span></li>`;
       }).join('');
     }
+    // drives not asked for yet (saved spots, suggestions from before drive times): fetch once, then redraw
+    if (s.home) app().loadDrives([...s.spots, ...s.suggestions.filter((g) => !g.drive)]).then((ok) => { if (ok) { UI.renderSpots(); app().drawSpots(); } });
   };
   UI.bindSpots = () => {
     const onList = (e, which) => {
@@ -739,79 +784,6 @@
       <div class="form-actions"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn primary" type="submit">Save</button></div>`;
     form.addEventListener('submit', (e) => { e.preventDefault(); app().updateSpot(p.id, { name: $('#rnName').value.trim() || p.name, note: $('#rnNote').value.trim() }); UI.closeModal(); });
     UI.modal('Edit spot', form);
-  };
-
-  // ---------- Journal ----------
-  UI.renderLog = () => {
-    if (UI.activeTab !== 'log') return;
-    const s = st();
-    const log = [...s.log].sort((a, b) => b.t - a.t);
-    const auroras = log.filter((x) => x.saw && x.saw.includes('aurora')).length;
-    const counts = {};
-    log.forEach((x) => { if (x.place) counts[x.place] = (counts[x.place] || 0) + 1; });
-    const fav = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
-    $('#logStats').innerHTML = `<div class="stat"><b>${log.length}</b><small>Nights out</small></div><div class="stat"><b>${auroras}</b><small>Auroras</small></div><div class="stat" title="${fav ? esc(fav[0]) : ''}"><b style="font-size:${fav && fav[0].length > 10 ? 15 : 22}px;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${fav ? esc(fav[0]) : '–'}</b><small>Favorite place</small></div>`;
-    const sawNames = { aurora: 'Aurora', milkyway: 'Milky Way', meteors: 'Meteors', planets: 'Planets', satellites: 'Satellites', clouds: 'Clouded out' };
-    $('#logList').innerHTML = !log.length
-      ? '<li class="empty"><b>Your first night out goes here</b>Log a night to keep the date, place, what you saw and the sky conditions.</li>'
-      : log.map((x) => {
-        const saw = x.saw || [];
-        const badge = saw.includes('aurora') ? '<span class="l-kind aurora">Aurora</span>' : saw.includes('milkyway') ? '<span class="l-kind stars">Milky Way</span>' : '';
-        const rest = saw.filter((k) => !(badge && (k === 'aurora' || (k === 'milkyway' && !saw.includes('aurora'))))).map((k) => sawNames[k] || k);
-        const c = x.cond || {};
-        const cond = [c.kp != null ? `Kp ${c.kp.toFixed(1)}` : null, c.bz != null ? `Bz ${c.bz > 0 ? '+' : ''}${c.bz.toFixed(1)}` : null, c.cc != null ? `${Math.round(c.cc)}% cloud` : null, c.moon != null ? `Moon ${Math.round(c.moon * 100)}%` : null].filter(Boolean);
-        return `<li class="log-item" data-id="${esc(x.id)}">
-          <div class="l-top"><span class="l-date">${esc(U.fmtDateLong(x.t))}</span><span class="l-stars" aria-label="${x.rating || 0} of 5">${'★'.repeat(x.rating || 0)}${'☆'.repeat(5 - (x.rating || 0))}</span></div>
-          <div class="l-where">${badge}<span>${esc(x.place || 'Somewhere dark')}${rest.length ? ` · ${esc(rest.join(', '))}` : badge ? '' : ' · Nothing noted'}</span></div>
-          ${x.notes ? `<div class="l-notes">${esc(x.notes)}</div>` : ''}
-          ${cond.length ? `<div class="l-cond">${cond.map((t) => `<span class="tag">${esc(t)}</span>`).join('')}</div>` : ''}
-          <button class="icon-btn l-del" type="button" data-del="${esc(x.id)}" aria-label="Delete this entry">${icon('trash')}</button></li>`;
-      }).join('');
-  };
-  UI.openLogForm = () => {
-    const s = st();
-    const form = $('#logForm');
-    const now = new Date();
-    const local = new Date(now.getTime() - now.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-    const places = [...(s.home ? [s.home.name] : []), ...s.spots.map((p) => p.name)];
-    const sel = app().place();
-    const snap = app().conditionsSnapshot();
-    form.innerHTML = `
-      <div class="field-row"><div class="field"><label for="lgDate">When</label><input id="lgDate" type="datetime-local" value="${local}" required></div>
-      <div class="field"><label for="lgPlace">Where</label><input id="lgPlace" type="text" list="lgPlaces" maxlength="60" value="${esc(sel ? sel.name : '')}" placeholder="Spot name"><datalist id="lgPlaces">${places.map((p) => `<option value="${esc(p)}"></option>`).join('')}</datalist></div></div>
-      <div class="field"><span class="lbl">What we saw</span><div class="checks">${[['aurora', 'Aurora'], ['milkyway', 'Milky Way'], ['meteors', 'Meteors'], ['planets', 'Planets'], ['satellites', 'Satellites'], ['clouds', 'Clouded out']].map(([v, l]) => `<label class="check"><input type="checkbox" name="saw" value="${v}"><span>${l}</span></label>`).join('')}</div></div>
-      <div class="field"><span class="lbl">How good was it</span><div class="stars-input" id="lgStars">${[1, 2, 3, 4, 5].map((n) => `<button type="button" data-n="${n}" aria-label="${n} star${n > 1 ? 's' : ''}">${icon('star')}</button>`).join('')}</div></div>
-      <div class="field"><label for="lgNotes">Notes</label><textarea id="lgNotes" maxlength="1000" placeholder="Colors, how long it lasted, who brought the cocoa…"></textarea></div>
-      <div class="snapshot">${snap.text ? `Saving with tonight's conditions: ${esc(snap.text)}` : ''}</div>
-      <div class="form-actions"><button class="btn ghost" type="button" id="lgCancel">Cancel</button><button class="btn primary" type="submit">Save night</button></div>`;
-    form.hidden = false;
-    let rating = 0;
-    const paint = () => U.$$('#lgStars button').forEach((b) => b.classList.toggle('on', +b.dataset.n <= rating));
-    $('#lgStars').onclick = (e) => { const b = e.target.closest('button'); if (b) { rating = +b.dataset.n; paint(); } };
-    $('#lgCancel').onclick = () => { form.hidden = true; };
-    form.onsubmit = (e) => {
-      e.preventDefault();
-      const t = new Date($('#lgDate').value).getTime();
-      const saw = U.$$('input[name="saw"]:checked', form).map((x) => x.value);
-      app().addLog({ id: U.uid(), t: Number.isFinite(t) ? t : Date.now(), place: $('#lgPlace').value.trim(), saw, rating, notes: $('#lgNotes').value.trim(), cond: Math.abs((Number.isFinite(t) ? t : Date.now()) - Date.now()) < 6 * U.HOUR ? snap.cond : null });
-      form.hidden = true;
-    };
-    $('#lgDate').focus();
-  };
-  UI.bindLog = () => {
-    $('#logNewBtn').onclick = () => UI.openLogForm();
-    $('#logList').addEventListener('click', (e) => {
-      const b = e.target.closest('[data-del]');
-      if (!b) return;
-      const li = b.closest('.log-item');
-      if (li.dataset.confirm) { app().removeLog(b.dataset.del); return; }
-      li.dataset.confirm = '1';
-      b.innerHTML = 'Delete?';
-      b.style.width = 'auto';
-      b.style.padding = '0 10px';
-      b.style.opacity = '1';
-      setTimeout(() => { if (li.isConnected) { delete li.dataset.confirm; b.innerHTML = icon('trash'); b.style.width = ''; b.style.padding = ''; b.style.opacity = ''; } }, 3500);
-    });
   };
 
   // ---------- Bottom sheet (phones) ----------
@@ -922,6 +894,8 @@
     // a drag that started on a button must not also press it
     panel.addEventListener('click', (e) => { if (justDragged) { e.stopPropagation(); e.preventDefault(); } }, true);
     grip.addEventListener('click', () => { if (SH.enabled) SH.snapTo(SH.snap === 'half' ? 'full' : 'half', { user: true }); });
+    // down at the bar, a place tapped on the map shows only its name: a tap on the name opens the card
+    panel.addEventListener('click', (e) => { if (SH.is('peek') && e.target.closest('.ins-head') && !e.target.closest('button')) SH.snapTo('half'); });
 
     // At 'full' the content scrolls natively; pulling down from its top shrinks the sheet.
     const touchDone = (e) => {
@@ -1157,18 +1131,23 @@
     $('#tlTime').textContent = s.live ? `Now · ${U.fmtClock(Date.now())}` : `${U.relDay(t)} ${U.fmtClock(t)}`;
     $('#tlNow').hidden = s.live;
     const r = TL.rows.find((x) => t >= x.t && t < x.t + U.HOUR) || null;
+    const p = app().place();
+    if (!p) { $('#tlNote').textContent = 'Set a home to see the forecast'; return; }
+    // a phone has room for about three facts: the clouds, and the numbers for what tonight is about
+    const phone = SH.enabled, aur = !phone || app().mode() !== 'stars', stars = !phone || !aur;
     const parts = [];
     if (r) {
       if (r.wx && r.wx.cc != null) parts.push(`Clouds ${Math.round(r.wx.cc)}%`);
-      if (r.kp != null) parts.push(`Kp ${r.kp.toFixed(1)}`);
+      if (r.kp != null && aur) parts.push(`Kp ${r.kp.toFixed(1)}`);
       if (r.sunAlt > -6) parts.push(r.sunAlt > 0 ? 'Daylight' : 'Twilight');
       else {
-        parts.push(`Aurora ${Math.round(r.scoreA * 100)}`);
-        parts.push(`Stars ${Math.round(r.scoreS * 100)}`);
+        if (aur) parts.push(`Aurora ${Math.round(r.scoreA * 100)}`);
+        if (stars) parts.push(`Stars ${Math.round(r.scoreS * 100)}`);
       }
     }
-    const p = app().place();
-    $('#tlNote').textContent = p ? `${parts.join(' · ')}${parts.length ? ' · ' : ''}${p.name}` : 'Set a home to see the forecast';
+    if (!(phone && p.kind === 'home')) parts.push(p.name);
+    const stl = UI.stale();
+    $('#tlNote').innerHTML = `${stl ? `<b class="tl-stale">${esc(stl.text)}</b>${parts.length ? ' · ' : ''}` : ''}${esc(parts.join(' · '))}`;
   };
   UI.bindTimeline = () => {
     const c = $('#tlCanvas');
@@ -1203,15 +1182,17 @@
   // Two sizes: a one-line strip that is always on the map, and the full key with the scales.
   UI.renderLegend = () => {
     const s = st(), L = s.settings.layers, a = app();
-    const info = a.keyInfo(), full = a.keyFull();
+    const info = a.keyInfo(), full = a.keyFull(), why = a.mapWhy();
+    const nv = document.documentElement.classList.contains('night-vision');
     const box = $('#legend');
     const showStars = L.best && (info.planned || s.settings.mode !== 'aurora');
     const showAur = L.best && (info.planned || s.settings.mode !== 'stars');
     const kpTxt = info.kp != null ? info.kp.toFixed(1) : null;
     if (!full) {
       const chips = [];
-      if (showStars) chips.push('<span class="kc"><i class="kd gold"></i>Stargazing</span>');
-      if (showAur) chips.push(info.inReach ? '<span class="kc"><i class="kd green"></i>Aurora viewing</span>' : '<span class="kc off"><i class="kd none"></i>Aurora out of reach</span>');
+      // nothing gold on screen: say what is failing instead of showing a swatch for a color that is not there
+      if (showStars) chips.push(why.none ? `<span class="kc off why"><i class="kd none"></i>No good sky here: ${esc(why.reason)}</span>` : '<span class="kc"><i class="kd gold"></i>Stargazing</span>');
+      if (showAur) chips.push(info.inReach ? `<span class="kc"><i class="kd green"></i>Aurora viewing${nv ? ' (striped)' : ''}</span>` : '<span class="kc off"><i class="kd none"></i>Aurora out of reach</span>');
       if (L.aurora && info.oval) chips.push('<span class="kc"><i class="kd curtain"></i>Aurora overhead</span>');
       if (L.clouds) chips.push('<span class="kc"><i class="kd cloud"></i>Clouds</span>');
       if (L.lp) chips.push('<span class="kc"><i class="kd lp"></i>Light pollution</span>');
@@ -1234,7 +1215,9 @@
         <div class="lg-ticks"><span>Poor</span><span>Fair</span><span>Good</span><span>Golden</span></div>` : ''}
         ${showAur ? `<div class="lg-name"><i class="kd green"></i>Aurora viewing</div><div class="lg-bar" style="background:linear-gradient(90deg,#0a0f1c,#1a999e 28%,#3df0a3 62%,#bdffe0)"></div>
         <div class="lg-ticks"><span>Unlikely</span><span>Possible</span><span>Likely</span><span>Strong</span></div>` : ''}
-        <div class="lg-note">${note}</div></div>`);
+        <div class="lg-note">${note}${nv && showAur && showStars ? ' In night vision the aurora ground is striped.' : ''}</div>
+        ${showStars && why.checks ? `<ul class="lg-checks" aria-label="What gold needs, in this view">${why.checks.map((c) => `<li class="${c.ok ? 'ok' : 'no'}">${icon(c.ok ? 'check' : 'close')}<b>${esc(c.k)}</b><span>${esc(c.v)}</span></li>`).join('')}</ul>
+        <div class="lg-note">${why.none ? `<b class="lg-why">Nothing gold in this view.</b> ${esc(why.reason)}.` : 'Gold needs all four at once, at the hour on the timeline.'}</div>` : showStars && why.ready && !why.covered ? `<div class="lg-note"><b class="lg-why">${esc(why.reason)}.</b> The cloud and darkness data reach about 150 miles from home.</div>` : ''}</div>`);
     }
     if (L.aurora) {
       parts.push(`<div class="lg-block"><div class="lg-title"><span>Aurora overhead</span><span>NOAA</span></div>
@@ -1285,7 +1268,7 @@
     else rows.push(['cloud', `Clouds ${when}`, d.wxErr ? 'Unavailable' : skel(60), '']);
     // the two things the map colors show, as numbers for this spot (same formulas as the map)
     const v = Sky.ovInView(d.lat, d.lon);
-    const siteV = D.siteAt(d.lat, d.lon) ?? (Number.isInteger(d.zone) ? Sky.SITE_STARS[d.zone] : null);
+    const siteV = D.siteAt(d.lat, d.lon) ?? (Number.isInteger(d.zone) ? Sky.siteAdj(Sky.SITE_STARS[d.zone]) : null);
     const ccv = w && w.cc != null ? w.cc : grid ? grid.cc : null;
     // A planned night is scored the way the map draws it: that night's Kp, and a clear sky where the
     // cloud forecast does not reach yet
@@ -1316,8 +1299,17 @@
     const elev = d.hz && d.hz.elev != null ? d.hz.elev : d.wx && d.wx.elev != null ? d.wx.elev : null;
     rows.push(['compass', 'Terrain', elev != null ? U.fmtElev(elev) : '–', hzHtml]);
     if (s.home && !(Math.abs(s.home.lat - d.lat) < 1e-5 && Math.abs(s.home.lon - d.lon) < 1e-5)) {
-      const km = U.distKm(s.home, d);
-      rows.push(['route', 'From home', U.fmtDist(km), `${U.compass(U.bearing(s.home, d))} of home, straight line`]);
+      const km = U.distKm(s.home, d), dir = U.compass(U.bearing(s.home, d));
+      const dv = km > 1 ? app().driveFor(d) : null;
+      if (dv && dv.min != null) {
+        rows.push(['route', 'From home', `${U.fmtDrive(dv.min)} drive`, `${U.fmtDist(dv.km)} by road, ${dir} of home (${U.fmtDist(km)} in a straight line).`]);
+        if (dv.snap <= 0.15) rows.push(['sign', 'On foot', 'Drive-up', 'A road reaches this spot.']);
+        else if (dv.snap <= WALK_KM) rows.push(['sign', 'On foot', `Short walk, ${U.fmtDist(dv.snap)}`, 'From the nearest road on the map.']);
+        else rows.push(['sign', 'On foot', `<b class="hike">Hike: at least ${U.fmtDist(dv.snap)} each way</b>`, 'The nearest road stops that far short, in a straight line; the trail will be longer. The drive time and Directions lead to where the road ends. Look for parking there on the satellite view.']);
+      } else {
+        const why = dv ? '. No road route found' : km > 1 && !d.driveDone ? '. Checking the drive…' : '';
+        rows.push(['route', 'From home', U.fmtDist(km), `${dir} of home, in a straight line${why}`]);
+      }
     }
     const saved = s.spots.find((p) => Math.abs(p.lat - d.lat) < 1e-4 && Math.abs(p.lon - d.lon) < 1e-4);
     const atHome = !!s.home && Math.abs(s.home.lat - d.lat) < 1e-5 && Math.abs(s.home.lon - d.lon) < 1e-5;
@@ -1327,7 +1319,7 @@
       <div class="ins-actions">
         ${saved ? `<button class="btn sm" type="button" disabled>${icon('check')}Saved</button>` : `<button class="btn primary sm" type="button" id="insSave">${icon('star')}Save spot</button>`}
         <button class="btn sm" type="button" id="insPlan">${icon('moon')}Plan tonight here</button>
-        <a class="btn sm ghost" href="${UI.directionsUrl(d.lat.toFixed(5), d.lon.toFixed(5))}" target="_blank" rel="noopener">${icon('route')}Directions</a>
+        ${dirLink(d)}
         ${atHome ? '' : `<button class="btn sm ghost" type="button" id="insHome">${icon('home')}Set as home</button>`}
       </div>
       <div class="ins-rows">${rows.map(([ic, k, v2, sub]) => `<div class="ins-row">${icon(ic)}<div><div class="k">${esc(k)}</div><div class="v">${v2}</div>${sub ? `<div class="s">${sub}</div>` : ''}</div></div>`).join('')}</div>`;
